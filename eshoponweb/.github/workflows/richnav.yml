@@ -1,0 +1,47 @@
+name: eShopOnWeb - Code Index
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * 0"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  code-index:
+    name: Build and Index Code
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_VERSION: "8.0.x"
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore ./eShopOnWeb.sln --locked-mode
+
+      - name: Build solution with binary log (required for Rich Code Nav)
+        run: dotnet build ./eShopOnWeb.sln --configuration Release --no-restore /bl:output.binlog
+
+      - name: Upload binary log artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-binlog
+          path: output.binlog
+          retention-days: 7
+
+      - name: Run Rich Code Nav Indexer
+        uses: microsoft/RichCodeNavIndexer@v0.1
+        with:
+          repo-token: ${{ github.token }}
+          languages: "csharp"
+          environment: "internal"
+        continue-on-error: true
