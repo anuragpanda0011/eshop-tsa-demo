@@ -1,90 +1,117 @@
-output "resource_group_name" {
-  value       = azurerm_resource_group.main.name
-  description = "Name of the primary resource group."
+output "cloud_run_url" {
+  description = "The public HTTPS URL of the Cloud Run service."
+  value       = module.compute.cloud_run_url
 }
 
-output "vnet_id" {
-  value       = module.network.vnet_id
-  description = "Resource ID of the primary Virtual Network."
+output "cloud_run_service_name" {
+  description = "Name of the deployed Cloud Run service."
+  value       = module.compute.cloud_run_service_name
 }
 
-output "acr_login_server" {
-  value       = module.compute.acr_login_server
-  description = "Azure Container Registry login server FQDN."
+output "artifact_registry_repository" {
+  description = "Full Artifact Registry repository path."
+  value       = module.compute.artifact_registry_repository
 }
 
-output "aca_web_fqdn" {
-  value       = module.compute.aca_web_fqdn
-  description = "Internal FQDN of the Web Container App."
+output "cloud_sql_instance_name" {
+  description = "Cloud SQL instance name."
+  value       = module.database.instance_name
 }
 
-output "aca_api_fqdn" {
-  value       = module.compute.aca_api_fqdn
-  description = "Internal FQDN of the API Container App."
+output "cloud_sql_private_ip" {
+  description  = "Private IP address of the Cloud SQL instance."
+  value        = module.database.private_ip
+  sensitive    = true
 }
 
-output "key_vault_uri" {
-  value       = module.security.key_vault_uri
-  description = "URI of the Azure Key Vault."
+output "cloud_sql_connection_name" {
+  description = "Cloud SQL connection name (project:region:instance)."
+  value       = module.database.connection_name
 }
 
-output "app_insights_connection_string" {
-  value       = module.monitoring.app_insights_connection_string
-  sensitive   = true
-  description = "Application Insights connection string. Use this for AAD-authenticated ingestion. instrumentation_key output has been removed."
+output "pdf_bucket_name" {
+  description = "Name of the Cloud Storage bucket for PDF reports."
+  value       = module.storage.bucket_name
 }
 
-output "front_door_endpoint_hostname" {
-  value       = module.network.front_door_endpoint_hostname
-  description = "Azure Front Door endpoint hostname."
+output "pdf_bucket_url" {
+  description = "gs:// URL of the PDF reports bucket."
+  value       = module.storage.bucket_url
 }
 
-output "static_web_app_url" {
-  value       = module.compute.static_web_app_url
-  description = "URL of the Azure Static Web App (BlazorAdmin) — AAD authentication enforced by Terraform."
+output "secret_manager_db_password_id" {
+  description = "Resource ID of the db-password secret in Secret Manager."
+  value       = module.security.db_password_secret_id
 }
 
-output "static_web_app_id" {
-  value       = module.compute.static_web_app_id
-  description = "Resource ID of the Azure Static Web App."
+output "cloudrun_service_account_email" {
+  description = "Email of the Cloud Run service account."
+  value       = module.security.cloudrun_sa_email
 }
 
-output "sql_server_fqdn" {
-  value       = module.database.sql_server_fqdn
-  description = "FQDN of the Azure SQL Server."
+output "cloudbuild_service_account_email" {
+  description = "Email of the Cloud Build service account."
+  value       = module.security.cloudbuild_sa_email
 }
 
-output "redis_hostname" {
-  value       = module.database.redis_hostname
-  description = "Hostname of the Azure Cache for Redis."
+output "vpc_name" {
+  description = "Name of the VPC network."
+  value       = module.network.vpc_name
 }
 
-output "github_actions_client_id" {
-  value       = module.ci_cd.github_actions_client_id
-  description = "Client ID of the Azure AD application used by GitHub Actions OIDC."
+output "vpc_connector_id" {
+  description = "Resource ID of the Serverless VPC Access Connector."
+  value       = module.network.vpc_connector_id
 }
 
-output "managed_identity_web_client_id" {
-  value       = module.security.managed_identity_web_client_id
-  description = "Client ID of the web app user-assigned managed identity."
+output "cloud_dns_name_servers" {
+  description = "Name servers for the Cloud DNS managed zone (if created)."
+  value       = module.ci_cd.dns_name_servers
 }
 
-output "managed_identity_api_client_id" {
-  value       = module.security.managed_identity_api_client_id
-  description = "Client ID of the API user-assigned managed identity."
+output "cloud_build_trigger_id" {
+  description = "Cloud Build trigger resource ID."
+  value       = module.ci_cd.cloud_build_trigger_id
 }
 
-output "apim_gateway_url" {
-  value       = module.compute.apim_gateway_url
-  description = "Azure API Management gateway URL."
-}
+output "post_apply_instructions" {
+  description = "Manual steps required after terraform apply."
+  value       = <<-EOT
+    ============================================================
+    POST-APPLY MANUAL STEPS REQUIRED
+    ============================================================
+    1. Set the DB password in Secret Manager and on the Cloud SQL user:
 
-output "nat_public_ips" {
-  value       = [module.network.nat_public_ip_z1, module.network.nat_public_ip_z2, module.network.nat_public_ip_z3]
-  description = "Zone-redundant NAT Gateway public IP addresses (one per availability zone)."
-}
+       DB_PASS=$(openssl rand -base64 32)
 
-output "log_analytics_workspace_guid" {
-  value       = module.monitoring_bootstrap.log_analytics_workspace_guid
-  description = "Log Analytics Workspace GUID — use this value for log_analytics_workspace_guid variable on subsequent applies."
+       # Store in Secret Manager
+       printf '%s' "$DB_PASS" | gcloud secrets versions add db-password \
+         --data-file=- --project=<PROJECT_ID>
+
+       # Set on Cloud SQL user via --password-file (not --password flag)
+       TMPFILE=$(mktemp) && chmod 600 "$TMPFILE"
+       printf '%s' "$DB_PASS" > "$TMPFILE"
+       gcloud sql users set-password ${module.database.db_user_name} \
+         --instance=${module.database.instance_name} \
+         --password-file="$TMPFILE" \
+         --project=<PROJECT_ID>
+       shred -u "$TMPFILE"
+       unset DB_PASS
+
+    2. Update the secret version pin in modules/compute/main.tf:
+       After adding the first secret version above, confirm it is version "1".
+       If rotating later, update version = "1" to the new version number and
+       redeploy Cloud Run.
+
+    3. Connect GitHub repository in Cloud Build console:
+       Cloud Build → Triggers → Connect Repository → GitHub
+
+    4. Point your DNS registrar's NS records to:
+       ${join(", ", module.ci_cd.dns_name_servers)}
+       (only if create_cloud_dns = true)
+
+    5. Deploy Cloud Armor security policy + HTTPS Load Balancer BEFORE setting
+       cloudrun_allow_unauthenticated = true and waf_policy_acknowledged = true.
+    ============================================================
+  EOT
 }

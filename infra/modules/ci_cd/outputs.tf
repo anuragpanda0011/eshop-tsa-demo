@@ -1,19 +1,24 @@
-output "github_actions_app_id" {
-  value = azuread_application.github_actions.id
+output "cloud_build_trigger_id" {
+  description = "Cloud Build trigger resource ID (empty if GitHub details not provided)."
+  value       = length(google_cloudbuild_trigger.github_push) > 0 ? google_cloudbuild_trigger.github_push[0].id : ""
 }
 
-output "github_actions_client_id" {
-  value = azuread_application.github_actions.client_id
+output "cloud_build_trigger_name" {
+  description = "Cloud Build trigger name."
+  value       = length(google_cloudbuild_trigger.github_push) > 0 ? google_cloudbuild_trigger.github_push[0].name : ""
 }
 
-output "github_actions_sp_object_id" {
-  value = azuread_service_principal.github_actions.object_id
+output "dns_zone_name" {
+  description = "Cloud DNS managed zone name (empty if not created)."
+  value       = length(google_dns_managed_zone.reporting) > 0 ? google_dns_managed_zone.reporting[0].name : ""
 }
 
-output "federated_credential_main_id" {
-  value = azuread_application_federated_identity_credential.github_main.id
+output "dns_name_servers" {
+  description = "Name servers for the Cloud DNS zone (empty if not created)."
+  value       = length(google_dns_managed_zone.reporting) > 0 ? google_dns_managed_zone.reporting[0].name_servers : []
 }
 
-output "federated_credential_pr_id" {
-  value = azuread_application_federated_identity_credential.github_pr.id
+output "dns_domain" {
+  description = "DNS domain of the managed zone."
+  value       = var.create_cloud_dns ? var.dns_domain : ""
 }

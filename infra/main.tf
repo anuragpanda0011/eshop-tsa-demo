@@ -1,216 +1,215 @@
-# ── Resource Group ────────────────────────────────────────────────────────────
-resource "azurerm_resource_group" "main" {
-  name     = "rg-${var.project}-${var.environment}"
-  location = var.location
-  tags     = var.tags
+# ---------------------------------------------------------------------------
+# Enable required GCP APIs
+# ---------------------------------------------------------------------------
+resource "google_project_service" "apis" {
+  for_each = toset([
+    "run.googleapis.com",
+    "sqladmin.googleapis.com",
+    "storage.googleapis.com",
+    "secretmanager.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "vpcaccess.googleapis.com",
+    "servicenetworking.googleapis.com",
+    "dns.googleapis.com",
+    "monitoring.googleapis.com",
+    "logging.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "iam.googleapis.com",
+    "compute.googleapis.com",
+    # Required for Artifact Registry vulnerability scanning
+    "containeranalysis.googleapis.com",
+    "cloudkms.googleapis.com",
+  ])
+
+  project            = var.project_id
+  service            = each.value
+  disable_on_destroy = false
 }
 
-# ── Monitoring Bootstrap (Log Analytics only — needed by security module) ─────
-# A minimal monitoring instantiation to break the circular dependency between
-# security (needs LAW ID for KV diag settings) and monitoring (needs KV for CMK).
-# The full monitoring module references this workspace via data source and adds
-# CMK linked storage, App Insights, alerts, and workbooks.
-module "monitoring_bootstrap" {
-  source = "./modules/monitoring_bootstrap"
-
-  resource_group_name = azurerm_resource_group.main.name
-  location            = var.location
-  project             = var.project
-  environment         = var.environment
-  log_retention_days  = var.log_retention_days
-  tags                = var.tags
-}
-
-# ── Networking ────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Network Module
+# ---------------------------------------------------------------------------
 module "network" {
   source = "./modules/network"
 
-  resource_group_name          = azurerm_resource_group.main.name
-  location                     = var.location
-  project                      = var.project
-  environment                  = var.environment
-  tags                         = var.tags
-  vnet_address_space           = var.vnet_address_space
-  subnet_aca_infra_cidr        = var.subnet_aca_infra_cidr
-  subnet_aca_apps_cidr         = var.subnet_aca_apps_cidr
-  subnet_pe_cidr               = var.subnet_pe_cidr
-  subnet_appgw_cidr            = var.subnet_appgw_cidr
-  subnet_redis_cidr            = var.subnet_redis_cidr
-  subnet_agents_cidr           = var.subnet_agents_cidr
-  subnet_bastion_cidr          = var.subnet_bastion_cidr
-  subnet_apim_cidr             = var.subnet_apim_cidr
-  log_analytics_workspace_id   = module.monitoring_bootstrap.log_analytics_workspace_id
-  log_analytics_workspace_guid = var.log_analytics_workspace_guid
-  custom_domain                = var.custom_domain
-  dns_zone_name                = var.dns_zone_name
-  dns_zone_resource_group      = var.dns_zone_resource_group
-  key_vault_id                 = module.security.key_vault_id
-  data_protection_key_name     = module.security.data_protection_key_name
+  project_id              = var.project_id
+  region                  = var.region
+  vpc_name                = var.vpc_name
+  subnet_connector_cidr   = var.subnet_connector_cidr
+  subnet_cloudsql_cidr    = var.subnet_cloudsql_cidr
+  psa_range_name          = var.psa_range_name
+  psa_cidr_prefix         = var.psa_cidr_prefix
+  connector_name          = var.connector_name
+  connector_min_instances = var.connector_min_instances
+  connector_max_instances = var.connector_max_instances
+  connector_machine_type  = var.connector_machine_type
+  labels                  = var.labels
 
-  depends_on = [module.monitoring_bootstrap, module.security]
+  depends_on = [google_project_service.apis]
 }
 
-# ── Security / Identity ───────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Security / Identity Module
+# ---------------------------------------------------------------------------
 module "security" {
   source = "./modules/security"
 
-  resource_group_name          = azurerm_resource_group.main.name
-  location                     = var.location
-  project                      = var.project
-  environment                  = var.environment
-  tags                         = var.tags
-  subnet_pe_id                 = module.network.subnet_pe_id
-  vnet_id                      = module.network.vnet_id
-  log_analytics_workspace_id   = module.monitoring_bootstrap.log_analytics_workspace_id
-  tenant_id                    = data.azurerm_client_config.current.tenant_id
-  current_object_id            = data.azurerm_client_config.current.object_id
-  private_dns_zone_keyvault_id = module.network.private_dns_zone_keyvault_id
-  private_dns_zone_blob_id     = module.network.private_dns_zone_blob_id
-  subscription_id              = var.subscription_id
+  project_id                 = var.project_id
+  region                     = var.region
+  pdf_bucket_name            = module.storage.bucket_name
+  artifact_registry_repo_id  = var.artifact_registry_repo_id
+  db_instance_name_prefix    = var.db_instance_name
+  kms_key_name               = var.security_kms_key_name
+  labels                     = var.labels
 
-  depends_on = [module.network, module.monitoring_bootstrap]
+  depends_on = [
+    google_project_service.apis,
+    module.storage,
+  ]
 }
 
-# ── Monitoring (full — deployed after security for CMK) ───────────────────────
-module "monitoring" {
-  source = "./modules/monitoring"
-
-  resource_group_name      = azurerm_resource_group.main.name
-  location                 = var.location
-  project                  = var.project
-  environment              = var.environment
-  log_retention_days       = var.log_retention_days
-  alert_email              = var.alert_email
-  tags                     = var.tags
-  subscription_id          = var.subscription_id
-  health_check_url         = module.network.front_door_endpoint_hostname
-  key_vault_id             = module.security.key_vault_id
-  data_protection_key_name = module.security.data_protection_key_name
-  subnet_pe_id             = module.network.subnet_pe_id
-  private_dns_zone_blob_id = module.network.private_dns_zone_blob_id
-  sampling_percentage      = var.app_insights_sampling_percentage
-
-  depends_on = [module.network, module.security]
-}
-
-# ── Database ──────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Database Module
+# ---------------------------------------------------------------------------
 module "database" {
   source = "./modules/database"
 
-  resource_group_name                  = azurerm_resource_group.main.name
-  location                             = var.location
-  project                              = var.project
-  environment                          = var.environment
-  tags                                 = var.tags
-  subnet_pe_id                         = module.network.subnet_pe_id
-  subnet_redis_id                      = module.network.subnet_redis_id
-  vnet_id                              = module.network.vnet_id
-  sql_sku                              = var.sql_sku
-  sql_max_size_gb                      = var.sql_max_size_gb
-  sql_zone_redundant                   = var.sql_zone_redundant
-  redis_sku                            = var.redis_sku
-  redis_family                         = var.redis_family
-  redis_capacity                       = var.redis_capacity
-  log_analytics_workspace_id           = module.monitoring_bootstrap.log_analytics_workspace_id
-  private_dns_zone_sql_id              = module.network.private_dns_zone_sql_id
-  private_dns_zone_redis_id            = module.network.private_dns_zone_redis_id
-  key_vault_id                         = module.security.key_vault_id
-  managed_identity_web_principal_id    = module.security.managed_identity_web_principal_id
-  managed_identity_api_principal_id    = module.security.managed_identity_api_principal_id
-  aad_sql_admin_object_id              = var.aad_sql_admin_object_id
-  tenant_id                            = data.azurerm_client_config.current.tenant_id
-  audit_storage_account_id             = module.security.audit_storage_account_id
-  audit_storage_primary_blob_endpoint  = module.security.audit_storage_primary_blob_endpoint
-  audit_storage_subscription_id        = var.subscription_id
+  project_id               = var.project_id
+  region                   = var.region
+  zone_primary             = var.zone_primary
+  zone_secondary           = var.zone_secondary
+  vpc_id                   = module.network.vpc_id
+  db_instance_name         = var.db_instance_name
+  db_tier                  = var.db_tier
+  db_postgres_version      = var.db_postgres_version
+  db_name                  = var.db_name
+  db_user                  = var.db_user
+  db_backup_retention_days = var.db_backup_retention_days
+  db_pitr_days             = var.db_pitr_days
+  db_deletion_protection   = var.db_deletion_protection
+  labels                   = var.labels
 
-  depends_on = [module.network, module.security, module.monitoring_bootstrap]
+  depends_on = [
+    google_project_service.apis,
+    module.network,
+  ]
 }
 
-# ── Compute ───────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Storage Module
+# ---------------------------------------------------------------------------
+module "storage" {
+  source = "./modules/storage"
+
+  project_id               = var.project_id
+  region                   = var.region
+  pdf_bucket_name_prefix   = var.pdf_bucket_name_prefix
+  pdf_bucket_nearline_days = var.pdf_bucket_nearline_days
+  pdf_bucket_coldline_days = var.pdf_bucket_coldline_days
+  pdf_bucket_delete_days   = var.pdf_bucket_delete_days
+  cors_allowed_origins     = var.cors_allowed_origins
+  kms_key_name             = var.kms_key_name
+  labels                   = var.labels
+
+  depends_on = [google_project_service.apis]
+}
+
+# ---------------------------------------------------------------------------
+# Compute Module (Cloud Run + Artifact Registry)
+# ---------------------------------------------------------------------------
 module "compute" {
   source = "./modules/compute"
 
-  resource_group_name                 = azurerm_resource_group.main.name
-  location                            = var.location
-  location_secondary                  = var.location_secondary
-  project                             = var.project
-  environment                         = var.environment
-  tags                                = var.tags
-  subnet_aca_infra_id                 = module.network.subnet_aca_infra_id
-  subnet_apim_id                      = module.network.subnet_apim_id
-  vnet_id                             = module.network.vnet_id
-  subnet_pe_id                        = module.network.subnet_pe_id
-  private_dns_zone_acr_id             = module.network.private_dns_zone_acr_id
-  private_dns_zone_blob_id            = module.network.private_dns_zone_blob_id
-  key_vault_id                        = module.security.key_vault_id
-  key_vault_uri                       = module.security.key_vault_uri
-  managed_identity_web_id             = module.security.managed_identity_web_id
-  managed_identity_api_id             = module.security.managed_identity_api_id
-  managed_identity_apim_id            = module.security.managed_identity_apim_id
-  managed_identity_web_client_id      = module.security.managed_identity_web_client_id
-  managed_identity_api_client_id      = module.security.managed_identity_api_client_id
-  managed_identity_web_principal_id   = module.security.managed_identity_web_principal_id
-  managed_identity_api_principal_id   = module.security.managed_identity_api_principal_id
-  app_insights_connection_string      = module.monitoring.app_insights_connection_string
-  app_insights_secret_name            = module.monitoring.app_insights_secret_name
-  log_analytics_workspace_id          = module.monitoring_bootstrap.log_analytics_workspace_id
-  web_image                           = var.web_image
-  api_image                           = var.api_image
-  web_min_replicas                    = var.web_min_replicas
-  web_max_replicas                    = var.web_max_replicas
-  api_min_replicas                    = var.api_min_replicas
-  api_max_replicas                    = var.api_max_replicas
-  web_cpu                             = var.web_cpu
-  web_memory                          = var.web_memory
-  api_cpu                             = var.api_cpu
-  api_memory                          = var.api_memory
-  github_repo_url                     = var.github_repo_url
-  github_branch                       = var.github_branch
-  swa_sku_tier                        = var.swa_sku_tier
-  swa_aad_client_id                   = var.swa_aad_client_id
-  swa_aad_client_secret               = var.swa_aad_client_secret
-  apim_publisher_email                = var.apim_publisher_email
-  apim_publisher_name                 = var.apim_publisher_name
-  apim_sku                            = var.apim_sku
-  apim_tenant_id                      = var.apim_tenant_id
-  apim_audience                       = var.apim_audience
-  front_door_id                       = module.network.front_door_id
-  nat_gateway_id                      = module.network.nat_gateway_id
-  data_protection_key_id              = module.security.data_protection_key_id
-  data_protection_key_name            = module.security.data_protection_key_name
-  custom_domain                       = var.custom_domain
+  project_id                     = var.project_id
+  region                         = var.region
+  cloudrun_service_name          = var.cloudrun_service_name
+  cloudrun_min_instances         = var.cloudrun_min_instances
+  cloudrun_max_instances         = var.cloudrun_max_instances
+  cloudrun_concurrency           = var.cloudrun_concurrency
+  cloudrun_cpu                   = var.cloudrun_cpu
+  cloudrun_memory                = var.cloudrun_memory
+  cloudrun_timeout_seconds       = var.cloudrun_timeout_seconds
+  cloudrun_allow_unauthenticated = var.cloudrun_allow_unauthenticated
+  waf_policy_acknowledged        = var.waf_policy_acknowledged
+  cloud_armor_policy_name        = var.cloud_armor_policy_name
+  cloudrun_service_account_email = module.security.cloudrun_sa_email
+  vpc_connector_id               = module.network.vpc_connector_id
+  db_host                        = module.database.private_ip
+  db_name                        = var.db_name
+  db_user                        = var.db_user
+  db_password_secret_id          = module.security.db_password_secret_id
+  pdf_bucket_name                = module.storage.bucket_name
+  django_settings_module         = var.django_settings_module
+  artifact_registry_repo_id      = var.artifact_registry_repo_id
+  artifact_registry_keep_count   = var.artifact_registry_keep_count
+  labels                         = var.labels
 
-  depends_on = [module.network, module.security, module.database, module.monitoring]
+  depends_on = [
+    google_project_service.apis,
+    module.network,
+    module.security,
+    module.database,
+    module.storage,
+  ]
 }
 
-# ── CI/CD ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# CI/CD Module (Cloud Build + Cloud DNS)
+# ---------------------------------------------------------------------------
 module "ci_cd" {
   source = "./modules/ci_cd"
 
-  resource_group_name              = azurerm_resource_group.main.name
-  location                         = var.location
-  project                          = var.project
-  environment                      = var.environment
-  tags                             = var.tags
-  subscription_id                  = var.subscription_id
-  tenant_id                        = data.azurerm_client_config.current.tenant_id
-  github_org                       = var.github_org
-  github_repo                      = var.github_repo
-  github_branch                    = var.github_branch
-  acr_id                           = module.compute.acr_id
-  acr_login_server                 = module.compute.acr_login_server
-  aca_web_id                       = module.compute.aca_web_id
-  aca_api_id                       = module.compute.aca_api_id
-  aca_environment_id               = module.compute.aca_environment_id
-  key_vault_id                     = module.security.key_vault_id
-  managed_identity_web_id          = module.security.managed_identity_web_id
-  managed_identity_api_id          = module.security.managed_identity_api_id
-  front_door_hostname              = module.network.front_door_endpoint_hostname
-  # FIX: Pass resource group ID for scoped Reader assignment (not subscription)
-  resource_group_id                = azurerm_resource_group.main.id
+  project_id                     = var.project_id
+  region                         = var.region
+  github_owner                   = var.github_owner
+  github_repo                    = var.github_repo
+  github_branch                  = var.github_branch
+  artifact_registry_repo_id      = var.artifact_registry_repo_id
+  cloudrun_service_name          = var.cloudrun_service_name
+  db_connection_name             = module.database.connection_name
+  db_name                        = var.db_name
+  db_user                        = var.db_user
+  db_password_secret_id          = module.security.db_password_secret_id
+  cloudbuild_sa_email            = module.security.cloudbuild_sa_email
+  create_cloud_dns               = var.create_cloud_dns
+  dns_zone_name                  = var.dns_zone_name
+  dns_domain                     = var.dns_domain
+  cloud_run_url                  = module.compute.cloud_run_url
+  labels                         = var.labels
 
-  depends_on = [module.compute, module.security]
+  depends_on = [
+    google_project_service.apis,
+    module.compute,
+    module.security,
+    module.database,
+  ]
 }
 
-# ── Data Sources ──────────────────────────────────────────────────────────────
-data "azurerm_client_config" "current" {}
+# ---------------------------------------------------------------------------
+# Monitoring Module
+# ---------------------------------------------------------------------------
+module "monitoring" {
+  source = "./modules/monitoring"
+
+  project_id                      = var.project_id
+  region                          = var.region
+  cloudrun_service_name           = var.cloudrun_service_name
+  db_instance_name                = module.database.instance_name
+  pdf_bucket_name                 = module.storage.bucket_name
+  alert_email                     = var.alert_email
+  alert_high_error_rate_threshold = var.alert_high_error_rate_threshold
+  alert_latency_p95_threshold_ms  = var.alert_latency_p95_threshold_ms
+  alert_sql_disk_threshold        = var.alert_sql_disk_threshold
+  alert_sql_cpu_threshold         = var.alert_sql_cpu_threshold
+  cloudrun_max_instances          = var.cloudrun_max_instances
+  log_bucket_kms_key_name         = var.log_bucket_kms_key_name
+  labels                          = var.labels
+
+  depends_on = [
+    google_project_service.apis,
+    module.compute,
+    module.database,
+    module.storage,
+  ]
+}

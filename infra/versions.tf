@@ -1,48 +1,44 @@
 terraform {
   required_version = ">= 1.7.0"
 
+  # ---------------------------------------------------------------------------
+  # Remote state — GCS backend with CMEK encryption.
+  # The bucket MUST be created and locked down BEFORE running `terraform init`.
+  #
+  # REQUIRED: Supply backend configuration via backend.hcl (do NOT commit).
+  # Run: terraform init -backend-config=backend.hcl -lockfile=readonly
+  #
+  # In CI, a missing backend.hcl or a stale/absent .terraform.lock.hcl MUST
+  # be treated as a pipeline failure:
+  #   terraform init -backend-config=backend.hcl -lockfile=readonly || exit 1
+  #
+  # The -lockfile=readonly flag prevents unreviewed provider upgrades — any
+  # provider version change requires a deliberate `terraform init -upgrade`
+  # followed by a code review and commit of the updated .terraform.lock.hcl.
+  #
+  # See backend.hcl (template — fill in and exclude from source control) for
+  # the bucket, prefix, and encryption_key values.
+  # ---------------------------------------------------------------------------
+  backend "gcs" {}
+
   required_providers {
-    azurerm = {
-      source = "hashicorp/azurerm"
-      # FIX: Tightened from ~> 3.117 (allows any 3.x minor) to a narrow range
-      # that allows only patch updates within 3.117.x. This prevents unreviewed
-      # minor releases from silently changing provider defaults or behavior.
-      # Use Renovate or Dependabot to propose deliberate minor version bumps
-      # with changelog review before merging.
-      version = ">= 3.117.0, < 3.118.0"
+    google = {
+      source  = "hashicorp/google"
+      # Pinned to 5.30.x — patch-level only; commit .terraform.lock.hcl.
+      # To upgrade: terraform init -upgrade, review diff, commit lock file.
+      version = "~> 5.30"
     }
-    azuread = {
-      source  = "hashicorp/azuread"
-      version = ">= 2.53.0, < 2.54.0"
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 5.30"
     }
     random = {
       source  = "hashicorp/random"
-      version = ">= 3.6.0, < 3.7.0"
+      version = "~> 3.6"
     }
-    local = {
-      source  = "hashicorp/local"
-      version = ">= 2.9.0, < 2.10.0"
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
     }
-  }
-
-  backend "azurerm" {
-    # Configure via -backend-config flags or environment variables:
-    # resource_group_name  = "rg-tfstate"
-    # storage_account_name = "sttfstateeshoponweb"
-    # container_name       = "tfstate"
-    # key                  = "eshoponweb/prod.tfstate"
-    #
-    # SECURITY REQUIREMENTS for state backend storage account (MANDATORY):
-    #   - min_tls_version = TLS1_2
-    #   - allow_blob_public_access = false
-    #   - versioning enabled
-    #   - Customer-managed key (CMK) encryption — HARD REQUIREMENT:
-    #     Redis primary_access_key is written to state in plaintext by the
-    #     azurerm provider. Without CMK, this key is exposed to anyone with
-    #     storage account read access.
-    #   - Access restricted to Terraform deployer identity only via RBAC
-    #   - Soft-delete and immutable storage policy enabled
-    #   - No shared access key usage (use Azure AD authentication only)
-    #   - See README Quick Start for bootstrap commands
   }
 }

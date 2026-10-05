@@ -1,18 +1,13 @@
-provider "azurerm" {
-  features {
-    key_vault {
-      purge_soft_delete_on_destroy    = false
-      recover_soft_deleted_key_vaults = true
-    }
-    resource_group {
-      prevent_deletion_if_contains_resources = true
-    }
-  }
-  subscription_id = var.subscription_id
+provider "google" {
+  project = var.project_id
+  region  = var.region
 }
 
-provider "azuread" {}
+provider "google-beta" {
+  project = var.project_id
+  region  = var.region
+}
 
 provider "random" {}
 
-provider "local" {}
+provider "null" {}

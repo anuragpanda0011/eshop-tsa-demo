@@ -1,91 +1,122 @@
-variable "resource_group_name" {
-  type = string
+variable "project_id" {
+  description = "GCP project ID."
+  type        = string
+
+  validation {
+    condition     = length(var.project_id) > 0
+    error_message = "project_id must not be empty."
+  }
 }
 
-variable "location" {
-  type = string
+variable "region" {
+  description = "GCP region."
+  type        = string
 }
 
-variable "project" {
-  type = string
-}
-
-variable "environment" {
-  type = string
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
-}
-
-variable "subscription_id" {
-  type = string
-}
-
-variable "tenant_id" {
-  type = string
-}
-
-variable "github_org" {
-  type = string
+variable "github_owner" {
+  description = "GitHub repository owner."
+  type        = string
+  default     = ""
 }
 
 variable "github_repo" {
-  type = string
+  description = "GitHub repository name."
+  type        = string
+  default     = ""
 }
 
 variable "github_branch" {
-  type    = string
-  default = "main"
-}
-
-variable "acr_id" {
-  type = string
-}
-
-variable "acr_login_server" {
-  type = string
-}
-
-variable "aca_web_id" {
+  description = "Branch to trigger Cloud Build on."
   type        = string
-  description = "Resource ID of the Web Container App. RBAC scoped to this resource only."
+  default     = "main"
 }
 
-variable "aca_api_id" {
+variable "artifact_registry_repo_id" {
+  description = "Artifact Registry repository ID."
   type        = string
-  description = "Resource ID of the API Container App. RBAC scoped to this resource only."
-}
-
-variable "aca_environment_id" {
-  type = string
-}
-
-variable "key_vault_id" {
-  type = string
-}
-
-variable "managed_identity_web_id" {
-  type = string
-}
-
-variable "managed_identity_api_id" {
-  type = string
-}
-
-# FIX: Resource group ID for scoped Reader assignment — not subscription scope.
-variable "resource_group_id" {
-  type        = string
-  description = "Resource ID of the deployment resource group. Reader is scoped here, not to the subscription."
-}
-
-variable "front_door_hostname" {
-  type        = string
-  description = "Front Door endpoint hostname used in smoke tests (referenced via GitHub vars.FRONT_DOOR_HOSTNAME)."
 
   validation {
-    condition     = length(var.front_door_hostname) > 0 && var.front_door_hostname != "placeholder.azurefd.net"
-    error_message = "front_door_hostname must be a real Front Door endpoint hostname, not a placeholder."
+    condition     = length(var.artifact_registry_repo_id) > 0
+    error_message = "artifact_registry_repo_id must not be empty."
   }
+}
+
+variable "cloudrun_service_name" {
+  description = "Cloud Run service name to deploy to."
+  type        = string
+
+  validation {
+    condition     = length(var.cloudrun_service_name) > 0
+    error_message = "cloudrun_service_name must not be empty."
+  }
+}
+
+variable "db_connection_name" {
+  description = "Cloud SQL connection name (project:region:instance) used by the Auth Proxy."
+  type        = string
+
+  validation {
+    condition     = length(var.db_connection_name) > 0
+    error_message = "db_connection_name must not be empty."
+  }
+}
+
+variable "db_name" {
+  description = "PostgreSQL database name."
+  type        = string
+}
+
+variable "db_user" {
+  description = "PostgreSQL user name."
+  type        = string
+}
+
+variable "db_password_secret_id" {
+  description = "Secret Manager secret resource ID for the DB password."
+  type        = string
+
+  validation {
+    condition     = length(var.db_password_secret_id) > 0
+    error_message = "db_password_secret_id must not be empty."
+  }
+}
+
+variable "cloudbuild_sa_email" {
+  description = "Cloud Build service account email."
+  type        = string
+
+  validation {
+    condition     = length(var.cloudbuild_sa_email) > 0 && can(regex("@.*\\.iam\\.gserviceaccount\\.com$", var.cloudbuild_sa_email))
+    error_message = "cloudbuild_sa_email must be a valid service account email."
+  }
+}
+
+variable "create_cloud_dns" {
+  description = "Whether to create a Cloud DNS managed zone."
+  type        = bool
+  default     = false
+}
+
+variable "dns_zone_name" {
+  description = "Cloud DNS managed zone name."
+  type        = string
+  default     = "reporting-zone"
+}
+
+variable "dns_domain" {
+  description = "DNS domain for the managed zone (trailing dot required)."
+  type        = string
+  default     = "reports.example.com."
+}
+
+variable "cloud_run_url" {
+  description = "Cloud Run service URL."
+  type        = string
+  default     = ""
+}
+
+variable "labels" {
+  description = "Labels to apply to resources."
+  type        = map(string)
+  default     = {}
 }

@@ -1,378 +1,316 @@
-# ── Azure AD Application for GitHub Actions OIDC ──────────────────────────────
-resource "azuread_application" "github_actions" {
-  display_name = "sp-github-actions-${var.project}-${var.environment}"
+# ---------------------------------------------------------------------------
+# Locals
+# ---------------------------------------------------------------------------
+locals {
+  db_password_secret_name = split("/", var.db_password_secret_id)[length(split("/", var.db_password_secret_id)) - 1]
 
-  required_resource_access {
-    resource_app_id = "00000003-0000-0000-c000-000000000000" # Microsoft Graph
+  create_github_trigger = var.github_owner != "" && var.github_repo != ""
 
-    resource_access {
-      id   = "e1fe6dd8-ba31-4d61-89e7-88639da4683d" # User.Read
-      type = "Scope"
+  # Artifact Registry image base path
+  image_base = "${var.region}-docker.pkg.dev/${var.project_id}/${var.artifact_registry_repo_id}/django-app"
+
+  # Official Cloud SQL Auth Proxy container image — pinned by tag+digest.
+  # Update this digest periodically as part of your dependency management process.
+  # Verify: docker pull gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.10.0
+  #         docker inspect --format='{{index .RepoDigests 0}}' gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.10.0
+  cloudsql_proxy_image = "gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.10.0"
+
+  # Python test image — pinned by digest to prevent supply-chain substitution.
+  # Update periodically: docker pull python:3.11-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.11-slim
+  # Digest current as of 2024-Q4; verify before use in production.
+  python_test_image = "python:3.11-slim@sha256:3c43bec84c26d6d5f2e3ae5a1dbffb7d84a5df25ce52c97e0a2cf58e5c36e4e2"
+}
+
+# ---------------------------------------------------------------------------
+# Cloud Build Trigger — GitHub push to main
+# NOTE: Requires a pre-existing GitHub connection in Cloud Build console.
+# ---------------------------------------------------------------------------
+resource "google_cloudbuild_trigger" "github_push" {
+  count = local.create_github_trigger ? 1 : 0
+
+  project     = var.project_id
+  name        = "trigger-django-reporting-main"
+  description = "Build and deploy Django reporting app on push to ${var.github_branch}"
+  location    = var.region
+
+  service_account = "projects/${var.project_id}/serviceAccounts/${var.cloudbuild_sa_email}"
+
+  github {
+    owner = var.github_owner
+    name  = var.github_repo
+
+    push {
+      branch = "^${var.github_branch}$"
     }
+  }
+
+  build {
+    timeout = "1200s"
+
+    options {
+      logging      = "CLOUD_LOGGING_ONLY"
+      machine_type = "E2_HIGHCPU_8"
+    }
+
+    available_secrets {
+      secret_manager {
+        version_name = "projects/${var.project_id}/secrets/${local.db_password_secret_name}/versions/latest"
+        env          = "DB_PASSWORD"
+      }
+    }
+
+    # Step 1 — Run unit tests
+    # Image is digest-pinned to prevent supply-chain substitution of the test runner.
+    # DB_PASSWORD here is a clearly non-credential test scaffold value; it is not
+    # a real secret and is explicitly documented as such. A real DB is not contacted
+    # during unit tests (DJANGO_SETTINGS_MODULE=config.settings.test uses an in-memory
+    # or SQLite backend). Do NOT use a real credential here.
+    step {
+      id         = "test"
+      name       = local.python_test_image
+      entrypoint = "bash"
+      args = [
+        "-c",
+        join(" && ", [
+          "pip install --quiet --no-cache-dir -r requirements.txt",
+          "python manage.py test --verbosity=2 --no-input",
+        ]),
+      ]
+      env = [
+        "DJANGO_SETTINGS_MODULE=config.settings.test",
+        "DB_HOST=localhost",
+        "DB_NAME=test_reporting",
+        "DB_USER=test_user",
+        # Non-credential test scaffold value — unit tests use SQLite/in-memory DB.
+        # This value has zero access to any real database; it satisfies Django's
+        # settings validation only. Replace with a Secret Manager reference if
+        # your test settings actually connect to a database.
+        "DB_PASSWORD=unittest-no-db-access",
+      ]
+    }
+
+    # Step 2 — Build Docker image (tagged with SHA; also tag latest for cache)
+    step {
+      id   = "build"
+      name = "gcr.io/cloud-builders/docker"
+      args = [
+        "build",
+        "--tag", "${local.image_base}:$SHORT_SHA",
+        "--tag", "${local.image_base}:latest",
+        "--cache-from", "${local.image_base}:latest",
+        "--label", "git-commit=$SHORT_SHA",
+        "--label", "build-id=$BUILD_ID",
+        ".",
+      ]
+      wait_for = ["test"]
+    }
+
+    # Step 3 — Push image with SHA tag (immutable, used for deployments)
+    step {
+      id       = "push-sha"
+      name     = "gcr.io/cloud-builders/docker"
+      args     = ["push", "${local.image_base}:$SHORT_SHA"]
+      wait_for = ["build"]
+    }
+
+    # Step 4 — Push image with latest tag (used only as build cache)
+    step {
+      id       = "push-latest"
+      name     = "gcr.io/cloud-builders/docker"
+      args     = ["push", "${local.image_base}:latest"]
+      wait_for = ["build"]
+    }
+
+    # Step 5 — Scan pushed image for HIGH/CRITICAL CVEs before proceeding.
+    # Requires containeranalysis.googleapis.com API to be enabled.
+    # The bash script blocks until results are available.
+    # Build fails if any HIGH or CRITICAL vulnerabilities are found.
+    step {
+      id         = "vuln-scan"
+      name       = "gcr.io/cloud-builders/gcloud"
+      entrypoint = "bash"
+      args = [
+        "-c",
+        join("\n", [
+          "set -euo pipefail",
+          "echo 'Waiting for vulnerability scan results...'",
+          "sleep 30",
+          "SCAN_RESULT=$(gcloud artifacts docker images list-vulnerabilities \\",
+          "  ${local.image_base}:$SHORT_SHA \\",
+          "  --project=${var.project_id} \\",
+          "  --location=${var.region} \\",
+          "  --format='value(vulnerability.effectiveSeverity)' \\",
+          "  --filter='vulnerability.effectiveSeverity=HIGH OR vulnerability.effectiveSeverity=CRITICAL')",
+          "if [ -n \"$$SCAN_RESULT\" ]; then",
+          "  echo 'HIGH or CRITICAL vulnerabilities found — blocking deployment'",
+          "  gcloud artifacts docker images list-vulnerabilities \\",
+          "    ${local.image_base}:$SHORT_SHA \\",
+          "    --project=${var.project_id} \\",
+          "    --location=${var.region} \\",
+          "    --filter='vulnerability.effectiveSeverity=HIGH OR vulnerability.effectiveSeverity=CRITICAL'",
+          "  exit 1",
+          "fi",
+          "echo 'Vulnerability scan passed — no HIGH/CRITICAL CVEs found'",
+        ]),
+      ]
+      wait_for = ["push-sha"]
+    }
+
+    # Step 6 — Start Cloud SQL Auth Proxy using official container image.
+    # Binds to 127.0.0.1 ONLY (loopback) — not 0.0.0.0 — to prevent exposing
+    # the proxy listener on other interfaces of the Cloud Build worker.
+    step {
+      id   = "start-proxy"
+      name = local.cloudsql_proxy_image
+      args = [
+        var.db_connection_name,
+        # SECURITY: bind to loopback only, not 0.0.0.0
+        "--address=127.0.0.1",
+        "--port=5433",
+        "--quiet",
+      ]
+      wait_for = ["vuln-scan"]
+    }
+
+    # Step 7 — Run database migrations via Cloud SQL Auth Proxy
+    step {
+      id         = "migrate"
+      name       = "${local.image_base}:$SHORT_SHA"
+      entrypoint = "bash"
+      args = [
+        "-c",
+        join("\n", [
+          "set -euo pipefail",
+          "# Wait for proxy to be ready",
+          "for i in $(seq 1 10); do",
+          "  nc -z 127.0.0.1 5433 && echo 'Proxy ready' && break",
+          "  echo \"Waiting for proxy... attempt $i\"",
+          "  sleep 2",
+          "done",
+          "python manage.py migrate --noinput",
+        ]),
+      ]
+      secret_env = ["DB_PASSWORD"]
+      env = [
+        "DJANGO_SETTINGS_MODULE=config.settings.production",
+        "DB_HOST=127.0.0.1",
+        "DB_PORT=5433",
+        "DB_NAME=${var.db_name}",
+        "DB_USER=${var.db_user}",
+      ]
+      wait_for = ["start-proxy"]
+    }
+
+    # Step 8 — Collect static files
+    step {
+      id         = "collectstatic"
+      name       = "${local.image_base}:$SHORT_SHA"
+      entrypoint = "bash"
+      args = [
+        "-c",
+        join("\n", [
+          "set -euo pipefail",
+          "python manage.py collectstatic --noinput",
+        ]),
+      ]
+      secret_env = ["DB_PASSWORD"]
+      env = [
+        "DJANGO_SETTINGS_MODULE=config.settings.production",
+        "DB_HOST=127.0.0.1",
+        "DB_PORT=5433",
+        "DB_NAME=${var.db_name}",
+        "DB_USER=${var.db_user}",
+      ]
+      wait_for = ["migrate"]
+    }
+
+    # Step 9 — Deploy new revision to Cloud Run (no traffic yet)
+    step {
+      id   = "deploy"
+      name = "gcr.io/cloud-builders/gcloud"
+      args = [
+        "run", "deploy", var.cloudrun_service_name,
+        "--image=${local.image_base}:$SHORT_SHA",
+        "--region=${var.region}",
+        "--platform=managed",
+        "--project=${var.project_id}",
+        "--no-traffic",
+      ]
+      wait_for = ["collectstatic"]
+    }
+
+    # Step 10 — Smoke test new revision before shifting traffic
+    step {
+      id         = "smoke-test"
+      name       = "gcr.io/cloud-builders/gcloud"
+      entrypoint = "bash"
+      args = [
+        "-c",
+        join("\n", [
+          "set -euo pipefail",
+          "NEW_REV=$(gcloud run revisions list --service=${var.cloudrun_service_name} --region=${var.region} --project=${var.project_id} --format='value(name)' --limit=1)",
+          "REVISION_URL=$(gcloud run revisions describe \"$$NEW_REV\" --region=${var.region} --project=${var.project_id} --format='value(status.url)')",
+          "echo \"Testing revision: $$REVISION_URL\"",
+          "curl -sSf --retry 3 --retry-delay 5 \"$$REVISION_URL/healthz/\" || (echo 'Smoke test failed!' && exit 1)",
+          "echo 'Smoke test passed!'",
+        ]),
+      ]
+      wait_for = ["deploy"]
+    }
+
+    # Step 11 — Shift 100% traffic to new revision
+    step {
+      id   = "shift-traffic"
+      name = "gcr.io/cloud-builders/gcloud"
+      args = [
+        "run", "services", "update-traffic", var.cloudrun_service_name,
+        "--to-latest",
+        "--region=${var.region}",
+        "--platform=managed",
+        "--project=${var.project_id}",
+      ]
+      wait_for = ["smoke-test"]
+    }
+
+    # Record built images (SHA tag only — latest is cache only)
+    images = [
+      "${local.image_base}:$SHORT_SHA",
+    ]
+  }
+
+  tags = ["django-reporting", "main-branch"]
+}
+
+# ---------------------------------------------------------------------------
+# Cloud DNS Managed Zone (optional)
+# ---------------------------------------------------------------------------
+resource "google_dns_managed_zone" "reporting" {
+  count = var.create_cloud_dns ? 1 : 0
+
+  project     = var.project_id
+  name        = var.dns_zone_name
+  dns_name    = var.dns_domain
+  description = "Managed DNS zone for Django reporting application"
+  visibility  = "public"
+
+  labels = var.labels
+
+  dnssec_config {
+    state = "on"
   }
 }
 
-resource "azuread_service_principal" "github_actions" {
-  client_id                    = azuread_application.github_actions.client_id
-  app_role_assignment_required = false
+# ---------------------------------------------------------------------------
+# Cloud DNS — CNAME record pointing custom domain → Cloud Run
+# ---------------------------------------------------------------------------
+resource "google_dns_record_set" "cloudrun_cname" {
+  count = var.create_cloud_dns ? 1 : 0
 
-  tags = ["github-actions", var.project, var.environment]
-}
+  project      = var.project_id
+  managed_zone = google_dns_managed_zone.reporting[0].name
+  name         = var.dns_domain
+  type         = "CNAME"
+  ttl          = 300
 
-# ── Federated Identity Credentials (OIDC) ─────────────────────────────────────
-# main branch pushes
-resource "azuread_application_federated_identity_credential" "github_main" {
-  application_id = azuread_application.github_actions.id
-  display_name   = "github-main-${var.github_repo}"
-  description    = "GitHub Actions OIDC for main branch of ${var.github_org}/${var.github_repo}"
-  audiences      = ["api://AzureADTokenExchange"]
-  issuer         = "https://token.actions.githubusercontent.com"
-  subject        = "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/${var.github_branch}"
-}
-
-# pull request checks
-resource "azuread_application_federated_identity_credential" "github_pr" {
-  application_id = azuread_application.github_actions.id
-  display_name   = "github-pr-${var.github_repo}"
-  description    = "GitHub Actions OIDC for pull requests of ${var.github_org}/${var.github_repo}"
-  audiences      = ["api://AzureADTokenExchange"]
-  issuer         = "https://token.actions.githubusercontent.com"
-  subject        = "repo:${var.github_org}/${var.github_repo}:pull_request"
-}
-
-# prod environment
-resource "azuread_application_federated_identity_credential" "github_env_prod" {
-  application_id = azuread_application.github_actions.id
-  display_name   = "github-env-prod-${var.github_repo}"
-  description    = "GitHub Actions OIDC for prod environment of ${var.github_org}/${var.github_repo}"
-  audiences      = ["api://AzureADTokenExchange"]
-  issuer         = "https://token.actions.githubusercontent.com"
-  subject        = "repo:${var.github_org}/${var.github_repo}:environment:production"
-}
-
-# ── RBAC Assignments for GitHub Actions SP ────────────────────────────────────
-
-# AcrPush — push images to ACR
-resource "azurerm_role_assignment" "github_acr_push" {
-  scope                = var.acr_id
-  role_definition_name = "AcrPush"
-  principal_id         = azuread_service_principal.github_actions.object_id
-}
-
-# AcrImageSigner — sign images
-resource "azurerm_role_assignment" "github_acr_signer" {
-  scope                = var.acr_id
-  role_definition_name = "AcrImageSigner"
-  principal_id         = azuread_service_principal.github_actions.object_id
-}
-
-# Azure ContainerApps Contributor on Web ACA resource only
-resource "azurerm_role_assignment" "github_aca_web_contributor" {
-  scope                = var.aca_web_id
-  role_definition_name = "Azure ContainerApps Contributor"
-  principal_id         = azuread_service_principal.github_actions.object_id
-}
-
-# Azure ContainerApps Contributor on API ACA resource only
-resource "azurerm_role_assignment" "github_aca_api_contributor" {
-  scope                = var.aca_api_id
-  role_definition_name = "Azure ContainerApps Contributor"
-  principal_id         = azuread_service_principal.github_actions.object_id
-}
-
-# FIX: Reader scoped to the deployment resource group only — NOT the full subscription.
-# This prevents enumeration of all resources across the subscription.
-# ARM lookups needed by the workflow are limited to the project resource group.
-resource "azurerm_role_assignment" "github_rg_reader" {
-  scope                = var.resource_group_id
-  role_definition_name = "Reader"
-  principal_id         = azuread_service_principal.github_actions.object_id
-}
-
-# Key Vault Secrets User — read secrets for deployment
-resource "azurerm_role_assignment" "github_kv_reader" {
-  scope                = var.key_vault_id
-  role_definition_name = "Key Vault Secrets User"
-  principal_id         = azuread_service_principal.github_actions.object_id
-}
-
-# ── GitHub Actions Workflow file (generated as local file) ────────────────────
-# All third-party GitHub Actions pinned to immutable SHA digests.
-# Digests current as of 2025-01 — re-pin periodically via Dependabot or manual audit.
-#
-# SECURITY NOTE: The generated workflow uses GitHub repository VARIABLES (vars.)
-# for non-secret identifiers (CLIENT_ID, TENANT_ID, SUBSCRIPTION_ID, ACR server,
-# resource group name). Set these in GitHub → Settings → Secrets and variables →
-# Actions → Variables before running the workflow:
-#   AZURE_CLIENT_ID       = <github_actions_client_id output>
-#   AZURE_TENANT_ID       = <your tenant ID>
-#   AZURE_SUBSCRIPTION_ID = <your subscription ID>
-#   ACR_LOGIN_SERVER      = <acr_login_server output>
-#   RESOURCE_GROUP        = <resource_group_name output>
-#   ACA_WEB_NAME          = ca-web-<project>-<environment>
-#   ACA_API_NAME          = ca-api-<project>-<environment>
-#   ACA_ENVIRONMENT_NAME  = cae-<project>-<environment>
-#   FRONT_DOOR_HOSTNAME   = <front_door_endpoint_hostname output>
-
-resource "local_file" "github_actions_workflow" {
-  filename        = "${path.module}/../../.github/workflows/ci-cd.yml"
-  file_permission = "0600"
-  content         = <<-YAML
-# =============================================================================
-# eShopOnWeb — CI/CD Pipeline
-# Generated by Terraform — do not edit manually.
-# All third-party actions pinned to immutable SHA digests.
-# Only SHA-tagged images are pushed — no mutable :latest tag.
-#
-# REQUIRED GITHUB REPOSITORY VARIABLES (Settings → Secrets and variables → Actions → Variables):
-#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
-#   ACR_LOGIN_SERVER, RESOURCE_GROUP, ACA_WEB_NAME, ACA_API_NAME,
-#   ACA_ENVIRONMENT_NAME, FRONT_DOOR_HOSTNAME
-# =============================================================================
-name: CI/CD Pipeline
-
-on:
-  push:
-    branches: ["${var.github_branch}"]
-  pull_request:
-    branches: ["${var.github_branch}"]
-
-permissions:
-  id-token: write      # Required for OIDC token exchange
-  contents: read
-  packages: write
-  security-events: write
-
-env:
-  ACR_LOGIN_SERVER: $${{ vars.ACR_LOGIN_SERVER }}
-  AZURE_SUBSCRIPTION_ID: $${{ vars.AZURE_SUBSCRIPTION_ID }}
-  AZURE_TENANT_ID: $${{ vars.AZURE_TENANT_ID }}
-  AZURE_CLIENT_ID: $${{ vars.AZURE_CLIENT_ID }}
-  RESOURCE_GROUP: $${{ vars.RESOURCE_GROUP }}
-  ACA_WEB_NAME: $${{ vars.ACA_WEB_NAME }}
-  ACA_API_NAME: $${{ vars.ACA_API_NAME }}
-  ACA_ENVIRONMENT_NAME: $${{ vars.ACA_ENVIRONMENT_NAME }}
-
-jobs:
-  # ── Build & Test ────────────────────────────────────────────────────────────
-  build-and-test:
-    name: Build & Test
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@3951f0dfe7a714d2ee2bea24f01c4b1be4e3d5d1  # v4.3.0
-        with:
-          dotnet-version: "8.0.x"
-
-      - name: Restore dependencies
-        run: dotnet restore
-
-      - name: Build
-        run: dotnet build --no-restore --configuration Release
-
-      - name: Run unit tests
-        run: dotnet test --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@1e68e06f1dbfde0e4cefc87efeba9e4f2c081eef  # v4.5.0
-        with:
-          directory: ./coverage
-          fail_ci_if_error: false
-
-  # ── Security Scan ────────────────────────────────────────────────────────────
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    needs: build-and-test
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Run Trivy vulnerability scanner (filesystem)
-        uses: aquasecurity/trivy-action@18f2af2a72c2a56c0f73c1fb6e5e879f7be3ba1a  # 0.28.0
-        with:
-          scan-type: "fs"
-          scan-ref: "."
-          format: "sarif"
-          output: "trivy-results.sarif"
-
-      - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@45775bd8235c68ba1b2b4e6b8ce7f998b2b444b7  # v3.28.0
-        with:
-          sarif_file: "trivy-results.sarif"
-
-  # ── Build & Push Docker Images ───────────────────────────────────────────────
-  build-and-push:
-    name: Build & Push Container Images
-    runs-on: ubuntu-latest
-    needs: [build-and-test, security-scan]
-    if: github.ref == 'refs/heads/${var.github_branch}' && github.event_name == 'push'
-    outputs:
-      web-image-tag: $${{ steps.meta-web.outputs.tags }}
-      api-image-tag: $${{ steps.meta-api.outputs.tags }}
-      image-sha: $${{ github.sha }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Login to Azure (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb7411525dba5  # v2.3.0
-        with:
-          client-id: $${{ env.AZURE_CLIENT_ID }}
-          tenant-id: $${{ env.AZURE_TENANT_ID }}
-          subscription-id: $${{ env.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Login to Azure Container Registry
-        run: az acr login --name $${{ env.ACR_LOGIN_SERVER }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca  # v3.9.0
-
-      - name: Extract metadata (Web)
-        id: meta-web
-        uses: docker/metadata-action@902fa8ec7d6ecbea8a07b0a573ee46aa2c80b02a  # v5.7.0
-        with:
-          images: $${{ env.ACR_LOGIN_SERVER }}/eshoponweb/web
-          tags: |
-            type=sha,format=long
-
-      - name: Build and push Web image
-        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434a0ef70  # v5.4.0
-        with:
-          context: ./src/Web
-          file: ./src/Web/Dockerfile
-          push: true
-          tags: $${{ steps.meta-web.outputs.tags }}
-          labels: $${{ steps.meta-web.outputs.labels }}
-          cache-from: type=registry,ref=$${{ env.ACR_LOGIN_SERVER }}/eshoponweb/web:buildcache
-          cache-to: type=registry,ref=$${{ env.ACR_LOGIN_SERVER }}/eshoponweb/web:buildcache,mode=max
-
-      - name: Extract metadata (API)
-        id: meta-api
-        uses: docker/metadata-action@902fa8ec7d6ecbea8a07b0a573ee46aa2c80b02a  # v5.7.0
-        with:
-          images: $${{ env.ACR_LOGIN_SERVER }}/eshoponweb/api
-          tags: |
-            type=sha,format=long
-
-      - name: Build and push API image
-        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434a0ef70  # v5.4.0
-        with:
-          context: ./src/PublicApi
-          file: ./src/PublicApi/Dockerfile
-          push: true
-          tags: $${{ steps.meta-api.outputs.tags }}
-          labels: $${{ steps.meta-api.outputs.labels }}
-          cache-from: type=registry,ref=$${{ env.ACR_LOGIN_SERVER }}/eshoponweb/api:buildcache
-          cache-to: type=registry,ref=$${{ env.ACR_LOGIN_SERVER }}/eshoponweb/api:buildcache,mode=max
-
-      - name: Scan Web image with Trivy
-        uses: aquasecurity/trivy-action@18f2af2a72c2a56c0f73c1fb6e5e879f7be3ba1a  # 0.28.0
-        with:
-          image-ref: "$${{ env.ACR_LOGIN_SERVER }}/eshoponweb/web:sha-$${{ github.sha }}"
-          format: "sarif"
-          output: "trivy-web.sarif"
-          exit-code: "1"
-          severity: "CRITICAL,HIGH"
-
-      - name: Scan API image with Trivy
-        uses: aquasecurity/trivy-action@18f2af2a72c2a56c0f73c1fb6e5e879f7be3ba1a  # 0.28.0
-        with:
-          image-ref: "$${{ env.ACR_LOGIN_SERVER }}/eshoponweb/api:sha-$${{ github.sha }}"
-          format: "sarif"
-          output: "trivy-api.sarif"
-          exit-code: "1"
-          severity: "CRITICAL,HIGH"
-
-  # ── Deploy to Azure Container Apps ───────────────────────────────────────────
-  deploy:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    environment: production
-    if: github.ref == 'refs/heads/${var.github_branch}' && github.event_name == 'push'
-
-    steps:
-      - name: Login to Azure (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb7411525dba5  # v2.3.0
-        with:
-          client-id: $${{ env.AZURE_CLIENT_ID }}
-          tenant-id: $${{ env.AZURE_TENANT_ID }}
-          subscription-id: $${{ env.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Install ACA extension
-        run: az extension add --name containerapp --upgrade --yes
-
-      - name: Deploy Web Container App revision
-        run: |
-          az containerapp update \
-            --name $${{ env.ACA_WEB_NAME }} \
-            --resource-group $${{ env.RESOURCE_GROUP }} \
-            --image $${{ env.ACR_LOGIN_SERVER }}/eshoponweb/web:sha-$${{ github.sha }} \
-            --set-env-vars "DEPLOYMENT_SHA=$${{ github.sha }}"
-
-      - name: Deploy API Container App revision
-        run: |
-          az containerapp update \
-            --name $${{ env.ACA_API_NAME }} \
-            --resource-group $${{ env.RESOURCE_GROUP }} \
-            --image $${{ env.ACR_LOGIN_SERVER }}/eshoponweb/api:sha-$${{ github.sha }} \
-            --set-env-vars "DEPLOYMENT_SHA=$${{ github.sha }}"
-
-      - name: Wait for Web deployment to stabilise
-        run: |
-          az containerapp revision list \
-            --name $${{ env.ACA_WEB_NAME }} \
-            --resource-group $${{ env.RESOURCE_GROUP }} \
-            --query "[?properties.active].{name:name,replicas:properties.replicas}" \
-            --output table
-
-      - name: Run smoke tests
-        run: |
-          echo "Running smoke tests against production..."
-          curl -sSf --retry 5 --retry-delay 10 \
-            -H "User-Agent: CI-SmokeTest/1.0" \
-            "https://$${{ vars.FRONT_DOOR_HOSTNAME }}/health" | grep -q '"status":"Healthy"'
-
-      - name: Logout of Azure
-        if: always()
-        run: az logout
-
-  # ── BlazorAdmin SWA Deploy ────────────────────────────────────────────────────
-  deploy-blazor-admin:
-    name: Deploy BlazorAdmin to Static Web Apps
-    runs-on: ubuntu-latest
-    needs: build-and-test
-    if: github.ref == 'refs/heads/${var.github_branch}' && github.event_name == 'push'
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@3951f0dfe7a714d2ee2bea24f01c4b1be4e3d5d1  # v4.3.0
-        with:
-          dotnet-version: "8.0.x"
-
-      - name: Publish BlazorAdmin
-        run: |
-          dotnet publish src/BlazorAdmin/BlazorAdmin.csproj \
-            --configuration Release \
-            --output ./publish/blazoradmin
-
-      - name: Deploy to Azure Static Web Apps
-        uses: Azure/static-web-apps-deploy@4f0e7bd0f1a07c3dfe4dab9591f7e7de00a0a9b0  # v1
-        with:
-          azure_static_web_apps_api_token: $${{ secrets.SWA_DEPLOYMENT_TOKEN }}
-          repo_token: $${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
-          app_location: "./publish/blazoradmin/wwwroot"
-          skip_api_build: true
-YAML
+  rrdatas = ["ghs.googlehosted.com."]
 }

@@ -1,80 +1,80 @@
-variable "resource_group_name" {
-  type = string
+variable "project_id" {
+  description = "GCP project ID."
+  type        = string
 }
 
-variable "location" {
-  type = string
+variable "region" {
+  description = "GCP region (used for regional log bucket placement)."
+  type        = string
 }
 
-variable "project" {
-  type = string
+variable "cloudrun_service_name" {
+  description = "Name of the Cloud Run service to monitor."
+  type        = string
 }
 
-variable "environment" {
-  type = string
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
-}
-
-variable "log_retention_days" {
-  type    = number
-  default = 90
+variable "db_instance_name" {
+  description = "Full Cloud SQL instance name (with random suffix, e.g. cloudsql-reporting-abc12345). Used for metric filters."
+  type        = string
 
   validation {
-    condition     = var.log_retention_days >= 90
-    error_message = "log_retention_days must be at least 90 days (CIS Azure benchmark)."
+    condition     = length(var.db_instance_name) > 0
+    error_message = "db_instance_name must not be empty."
   }
+}
+
+variable "pdf_bucket_name" {
+  description = "Name of the PDF reports Cloud Storage bucket."
+  type        = string
 }
 
 variable "alert_email" {
-  type = string
-}
-
-variable "subscription_id" {
+  description = "Email address for alerting notifications."
   type        = string
-  description = "Azure Subscription ID used for alert scope construction."
 }
 
-variable "health_check_url" {
-  type        = string
-  description = "Hostname used for Application Insights availability web test (e.g. Front Door endpoint hostname)."
-
-  validation {
-    condition     = length(var.health_check_url) > 0
-    error_message = "health_check_url must be a non-empty hostname."
-  }
-}
-
-variable "key_vault_id" {
-  type        = string
-  description = "Key Vault resource ID for CMK configuration of the LAW linked storage account."
-}
-
-variable "data_protection_key_name" {
-  type        = string
-  description = "Key Vault key name used for CMK on the LAW storage account."
-}
-
-variable "subnet_pe_id" {
-  type        = string
-  description = "Subnet ID for the private endpoint of the LAW CMK storage account."
-}
-
-variable "private_dns_zone_blob_id" {
-  type        = string
-  description = "Resource ID of the blob storage private DNS zone for the LAW CMK storage private endpoint."
-}
-
-variable "sampling_percentage" {
+variable "alert_high_error_rate_threshold" {
+  description = "5xx error rate fraction threshold (e.g. 0.05 = 5%)."
   type        = number
-  default     = 20
-  description = "Application Insights telemetry sampling percentage (1-100). Lower values reduce LAW ingestion to avoid daily quota breach."
+  default     = 0.05
+}
+
+variable "alert_latency_p95_threshold_ms" {
+  description = "p95 latency threshold in milliseconds."
+  type        = number
+  default     = 10000
+}
+
+variable "alert_sql_disk_threshold" {
+  description = "Cloud SQL disk utilisation fraction threshold."
+  type        = number
+  default     = 0.80
+}
+
+variable "alert_sql_cpu_threshold" {
+  description = "Cloud SQL CPU utilisation fraction threshold."
+  type        = number
+  default     = 0.90
+}
+
+variable "cloudrun_max_instances" {
+  description = "Cloud Run max instances (used for instance-at-max alert)."
+  type        = number
+  default     = 5
+}
+
+variable "log_bucket_kms_key_name" {
+  description = "Cloud KMS key resource name for CMEK encryption of Cloud Logging buckets. Must be in the same region as the buckets. Format: projects/<project>/locations/<region>/keyRings/<ring>/cryptoKeys/<key>"
+  type        = string
 
   validation {
-    condition     = var.sampling_percentage >= 1 && var.sampling_percentage <= 100
-    error_message = "sampling_percentage must be between 1 and 100."
+    condition     = length(var.log_bucket_kms_key_name) > 0
+    error_message = "log_bucket_kms_key_name must not be empty. Provide a Cloud KMS key for log bucket CMEK encryption."
   }
+}
+
+variable "labels" {
+  description = "Labels to apply to resources."
+  type        = map(string)
+  default     = {}
 }

@@ -1,317 +1,390 @@
-# ── Global ────────────────────────────────────────────────────────────────────
-variable "subscription_id" {
+# ---------------------------------------------------------------------------
+# Project & Region
+# ---------------------------------------------------------------------------
+variable "project_id" {
+  description = "GCP project ID where all resources will be created."
   type        = string
-  description = "Azure Subscription ID where all resources will be deployed."
-}
-
-variable "location" {
-  type        = string
-  default     = "eastus2"
-  description = "Primary Azure region for resource deployment."
-}
-
-variable "location_secondary" {
-  type        = string
-  default     = "westus2"
-  description = "Secondary Azure region used for ACR geo-replication and DR."
-}
-
-variable "environment" {
-  type        = string
-  default     = "prod"
-  description = "Deployment environment label (prod, staging, dev)."
-}
-
-variable "project" {
-  type        = string
-  default     = "eshoponweb"
-  description = "Project name used as a prefix for all resource names."
-}
-
-variable "tags" {
-  type = map(string)
-  default = {
-    project     = "eshoponweb"
-    environment = "prod"
-    managed_by  = "terraform"
-  }
-  description = "Common tags applied to all resources."
-}
-
-# ── Networking ────────────────────────────────────────────────────────────────
-variable "vnet_address_space" {
-  type        = list(string)
-  default     = ["10.10.0.0/16"]
-  description = "Address space for the primary virtual network."
-}
-
-variable "subnet_aca_infra_cidr" {
-  type    = string
-  default = "10.10.0.0/23"
-}
-
-variable "subnet_aca_apps_cidr" {
-  type    = string
-  default = "10.10.2.0/23"
-}
-
-variable "subnet_pe_cidr" {
-  type    = string
-  default = "10.10.4.0/24"
-}
-
-variable "subnet_appgw_cidr" {
-  type    = string
-  default = "10.10.5.0/26"
-}
-
-variable "subnet_redis_cidr" {
-  type    = string
-  default = "10.10.6.0/27"
-}
-
-variable "subnet_agents_cidr" {
-  type    = string
-  default = "10.10.7.0/26"
-}
-
-variable "subnet_bastion_cidr" {
-  type    = string
-  default = "10.10.8.0/27"
-}
-
-variable "subnet_apim_cidr" {
-  type        = string
-  default     = "10.10.9.0/27"
-  description = "CIDR block for the dedicated APIM subnet (/27 minimum for External VNet mode)."
-}
-
-# ── DNS ───────────────────────────────────────────────────────────────────────
-variable "custom_domain" {
-  type        = string
-  default     = "shop.contoso.com"
-  description = "Custom domain for the storefront (CNAME to Front Door)."
-}
-
-variable "dns_zone_name" {
-  type        = string
-  default     = "contoso.com"
-  description = "Azure DNS public zone name."
-}
-
-variable "dns_zone_resource_group" {
-  type        = string
-  default     = "rg-dns"
-  description = "Resource group containing the public DNS zone."
-}
-
-# ── Compute ───────────────────────────────────────────────────────────────────
-variable "web_min_replicas" {
-  type    = number
-  default = 2
-}
-
-variable "web_max_replicas" {
-  type    = number
-  default = 20
-}
-
-variable "api_min_replicas" {
-  type    = number
-  default = 2
-}
-
-variable "api_max_replicas" {
-  type    = number
-  default = 15
-}
-
-variable "web_cpu" {
-  type    = string
-  default = "1.0"
-}
-
-variable "web_memory" {
-  type    = string
-  default = "2Gi"
-}
-
-variable "api_cpu" {
-  type    = string
-  default = "0.75"
-}
-
-variable "api_memory" {
-  type    = string
-  default = "1.5Gi"
-}
-
-variable "web_image" {
-  type        = string
-  description = "Container image for the Web app. Must use a pinned tag or digest — not ':latest'."
 
   validation {
-    condition     = !endswith(var.web_image, ":latest")
-    error_message = "web_image must not use the ':latest' floating tag. Use a pinned version tag or @sha256 digest."
+    condition     = length(var.project_id) > 0
+    error_message = "project_id must not be empty."
   }
 }
 
-variable "api_image" {
+variable "region" {
+  description = "GCP region for all regional resources."
   type        = string
-  description = "Container image for the API app. Must use a pinned tag or digest — not ':latest'."
-
-  validation {
-    condition     = !endswith(var.api_image, ":latest")
-    error_message = "api_image must not use the ':latest' floating tag. Use a pinned version tag or @sha256 digest."
-  }
+  default     = "us-central1"
 }
 
-# ── Static Web App Authentication ─────────────────────────────────────────────
-variable "swa_aad_client_id" {
+variable "zone_primary" {
+  description = "Primary GCP zone (used for Cloud SQL primary instance)."
   type        = string
-  description = "Azure AD App Registration client ID for Static Web App AAD authentication. Required — create a dedicated app registration with the SWA redirect URI configured."
+  default     = "us-central1-b"
 }
 
-variable "swa_aad_client_secret" {
+variable "zone_secondary" {
+  description = "Secondary GCP zone (used for Cloud SQL HA standby)."
   type        = string
-  sensitive   = true
-  description = "Azure AD App Registration client secret for Static Web App AAD authentication. Use TF_VAR_swa_aad_client_secret environment variable — do not commit to tfvars."
+  default     = "us-central1-c"
 }
 
-# ── Database ──────────────────────────────────────────────────────────────────
-variable "aad_sql_admin_object_id" {
+# ---------------------------------------------------------------------------
+# Networking
+# ---------------------------------------------------------------------------
+variable "vpc_name" {
+  description = "Name of the custom VPC network."
   type        = string
-  description = "Object ID of the AAD group to set as SQL AAD administrator. Required — use a dedicated AAD group, not an individual user or managed identity."
-
-  validation {
-    condition     = length(var.aad_sql_admin_object_id) > 0
-    error_message = "aad_sql_admin_object_id is required and must be a non-empty AAD object ID."
-  }
+  default     = "vpc-reporting"
 }
 
-variable "sql_sku" {
+variable "subnet_connector_cidr" {
+  description = "CIDR for the Serverless VPC Access Connector subnet (/28 required)."
   type        = string
-  default     = "GP_Gen5_2"
-  description = "Azure SQL Database SKU."
+  default     = "10.8.0.0/28"
 }
 
-variable "sql_max_size_gb" {
-  type    = number
-  default = 32
-}
-
-variable "sql_zone_redundant" {
-  type    = bool
-  default = true
-}
-
-# ── Redis ─────────────────────────────────────────────────────────────────────
-variable "redis_sku" {
-  type    = string
-  default = "Standard"
-}
-
-variable "redis_family" {
-  type    = string
-  default = "C"
-}
-
-variable "redis_capacity" {
-  type    = number
-  default = 1
-}
-
-# ── APIM ──────────────────────────────────────────────────────────────────────
-variable "apim_publisher_email" {
+variable "subnet_cloudsql_cidr" {
+  description = "CIDR for the Cloud SQL private subnet."
   type        = string
-  description = "Publisher email for Azure API Management."
+  default     = "10.8.1.0/29"
 }
 
-variable "apim_publisher_name" {
+variable "psa_range_name" {
+  description = "Name for the Private Service Access allocated IP range."
   type        = string
-  default     = "eShopOnWeb Team"
-  description = "Publisher name for Azure API Management."
+  default     = "psa-range-reporting"
 }
 
-variable "apim_sku" {
+variable "psa_cidr_prefix" {
+  description = "CIDR prefix for the PSA allocated range (Google-managed, /16 recommended)."
   type        = string
-  default     = "Standard_1"
-  description = "APIM SKU. Defaults to Standard_1 (production-grade with SLA). Developer_1 must not be used in production."
-
-  validation {
-    condition     = !(var.apim_sku == "Developer_1" && var.environment == "prod")
-    error_message = "Developer_1 SKU has no SLA and must not be used when environment is 'prod'. Use Standard_1 or higher."
-  }
+  default     = "10.100.0.0/16"
 }
 
-variable "apim_tenant_id" {
+variable "connector_name" {
+  description = "Name of the Serverless VPC Access Connector."
   type        = string
-  description = "Azure AD tenant ID used to construct the tenant-specific APIM JWT validation issuer URL."
+  default     = "connector-reporting"
 }
 
-variable "apim_audience" {
-  type        = string
-  description = "Application ID URI used in APIM JWT audience validation (e.g. api://<app-registration-id>)."
-}
-
-# ── Static Web Apps ───────────────────────────────────────────────────────────
-variable "swa_sku_tier" {
-  type    = string
-  default = "Standard"
-}
-
-variable "github_repo_url" {
-  type        = string
-  default     = "https://github.com/contoso/eShopOnWeb"
-  description = "GitHub repository URL for Static Web Apps integration."
-}
-
-variable "github_branch" {
-  type    = string
-  default = "main"
-}
-
-# ── Monitoring ────────────────────────────────────────────────────────────────
-variable "log_retention_days" {
+variable "connector_min_instances" {
+  description = "Minimum number of VPC connector instances."
   type        = number
-  default     = 90
-  description = "Log Analytics and Application Insights retention in days. Minimum 90 (CIS benchmark)."
-
-  validation {
-    condition     = var.log_retention_days >= 90
-    error_message = "log_retention_days must be at least 90 days to meet CIS Azure benchmark requirements."
-  }
+  default     = 2
 }
 
-variable "alert_email" {
-  type        = string
-  description = "Email address for monitoring alerts."
+variable "connector_max_instances" {
+  description = "Maximum number of VPC connector instances."
+  type        = number
+  default     = 3
 }
 
-variable "log_analytics_workspace_guid" {
+variable "connector_machine_type" {
+  description = "Machine type for VPC connector instances."
   type        = string
-  description = "Log Analytics Workspace GUID (not resource ID) required for NSG flow log traffic analytics. Obtain after workspace creation: terraform output -raw log_analytics_workspace_guid or from Azure portal."
+  default     = "e2-micro"
+}
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+variable "db_instance_name" {
+  description = "Name of the Cloud SQL instance."
+  type        = string
+  default     = "cloudsql-reporting"
+}
+
+variable "db_tier" {
+  description = "Cloud SQL machine tier."
+  type        = string
+  default     = "db-g1-small"
+}
+
+variable "db_postgres_version" {
+  description = "PostgreSQL version for Cloud SQL."
+  type        = string
+  default     = "POSTGRES_15"
+}
+
+variable "db_name" {
+  description = "PostgreSQL database name to create."
+  type        = string
+  default     = "reporting"
+}
+
+variable "db_user" {
+  description = "PostgreSQL application user name."
+  type        = string
+  default     = "reporting_app"
+}
+
+variable "db_backup_retention_days" {
+  description = "Number of days to retain automated backups."
+  type        = number
+  default     = 7
+}
+
+variable "db_pitr_days" {
+  description = "Number of days for Point-in-Time Recovery transaction log retention."
+  type        = number
+  default     = 7
+}
+
+variable "db_deletion_protection" {
+  description = "Enable deletion protection on the Cloud SQL instance."
+  type        = bool
+  default     = true
+}
+
+# ---------------------------------------------------------------------------
+# Compute / Cloud Run
+# ---------------------------------------------------------------------------
+variable "cloudrun_service_name" {
+  description = "Name of the Cloud Run service."
+  type        = string
+  default     = "cloudrun-reporting"
+}
+
+variable "cloudrun_min_instances" {
+  description = "Minimum Cloud Run instances (set to 1 to avoid cold starts)."
+  type        = number
+  default     = 1
+}
+
+variable "cloudrun_max_instances" {
+  description = "Maximum Cloud Run instances."
+  type        = number
+  default     = 5
+}
+
+variable "cloudrun_concurrency" {
+  description = "Maximum concurrent requests per Cloud Run instance."
+  type        = number
+  default     = 80
+}
+
+variable "cloudrun_cpu" {
+  description = "CPU allocation for each Cloud Run instance."
+  type        = string
+  default     = "1000m"
+}
+
+variable "cloudrun_memory" {
+  description = "Memory allocation for each Cloud Run instance."
+  type        = string
+  default     = "1Gi"
+}
+
+variable "cloudrun_timeout_seconds" {
+  description = "Request timeout for Cloud Run service in seconds."
+  type        = number
+  default     = 300
+}
+
+variable "cloudrun_allow_unauthenticated" {
+  description = "Allow unauthenticated public access to Cloud Run service via HTTPS LB only. When true, a Cloud Armor policy (cloud_armor_policy_name) and HTTPS LB must already be deployed, and waf_policy_acknowledged must be true."
+  type        = bool
+  # SECURITY: default false — explicit opt-in required.
+  default     = false
+}
+
+variable "waf_policy_acknowledged" {
+  description = "Set to true ONLY after a Cloud Armor security policy (named by cloud_armor_policy_name) and HTTPS Load Balancer are deployed and verified in this project. A data source lookup validates the policy exists at plan time."
+  type        = bool
+  # SECURITY: default false — explicit opt-in required.
+  default     = false
+}
+
+variable "cloud_armor_policy_name" {
+  description = "Name of an existing Cloud Armor security policy. Required when waf_policy_acknowledged=true. Must name a real, deployed policy in the same project — validated by a data source lookup at plan time."
+  type        = string
   default     = ""
 }
 
-variable "app_insights_sampling_percentage" {
-  type        = number
-  default     = 20
-  description = "Application Insights telemetry sampling percentage (1-100). Lower values reduce LAW ingestion volume. 20 is recommended for production to stay within daily quota."
+variable "django_settings_module" {
+  description = "Django settings module path."
+  type        = string
+  default     = "config.settings.production"
+}
+
+# ---------------------------------------------------------------------------
+# Artifact Registry
+# ---------------------------------------------------------------------------
+variable "artifact_registry_repo_id" {
+  description = "Artifact Registry repository ID."
+  type        = string
+  default     = "reporting"
 
   validation {
-    condition     = var.app_insights_sampling_percentage >= 1 && var.app_insights_sampling_percentage <= 100
-    error_message = "app_insights_sampling_percentage must be between 1 and 100."
+    condition     = length(var.artifact_registry_repo_id) > 0
+    error_message = "artifact_registry_repo_id must not be empty."
   }
 }
 
-# ── CI/CD ─────────────────────────────────────────────────────────────────────
-variable "github_org" {
+variable "artifact_registry_keep_count" {
+  description = "Number of most-recent tagged Docker images to retain."
+  type        = number
+  default     = 10
+}
+
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
+variable "pdf_bucket_name_prefix" {
+  description = "Prefix for the PDF reports Cloud Storage bucket name (project ID is appended)."
   type        = string
-  description = "GitHub organisation for OIDC federated identity."
+  default     = "pdf-reports"
+}
+
+variable "pdf_bucket_nearline_days" {
+  description = "Days after which objects transition to NEARLINE storage class."
+  type        = number
+  default     = 90
+}
+
+variable "pdf_bucket_coldline_days" {
+  description = "Days after which objects transition to COLDLINE storage class."
+  type        = number
+  default     = 365
+}
+
+variable "pdf_bucket_delete_days" {
+  description = "Days after which objects are deleted (7 years = 2555 days)."
+  type        = number
+  default     = 2555
+}
+
+variable "cors_allowed_origins" {
+  description = "List of allowed CORS origins for the PDF reports bucket. Wildcard '*' is explicitly rejected."
+  type        = list(string)
+
+  validation {
+    condition     = !contains(var.cors_allowed_origins, "*")
+    error_message = "cors_allowed_origins must not contain '*'. Specify exact origins."
+  }
+
+  validation {
+    condition     = length(var.cors_allowed_origins) > 0
+    error_message = "cors_allowed_origins must contain at least one origin."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# CMEK — Customer-Managed Encryption Keys
+# ---------------------------------------------------------------------------
+variable "kms_key_name" {
+  description = "Cloud KMS key for GCS bucket CMEK encryption. Must be in the same region as the buckets. The GCS service account must have roles/cloudkms.cryptoKeyEncrypterDecrypter on this key. Format: projects/<p>/locations/<r>/keyRings/<kr>/cryptoKeys/<k>"
+  type        = string
+
+  validation {
+    condition     = length(var.kms_key_name) > 0
+    error_message = "kms_key_name must not be empty."
+  }
+}
+
+variable "log_bucket_kms_key_name" {
+  description = "Cloud KMS key for Cloud Logging bucket CMEK encryption. Must be in the same region as the log buckets. The Cloud Logging service account must have roles/cloudkms.cryptoKeyEncrypterDecrypter on this key."
+  type        = string
+
+  validation {
+    condition     = length(var.log_bucket_kms_key_name) > 0
+    error_message = "log_bucket_kms_key_name must not be empty."
+  }
+}
+
+variable "security_kms_key_name" {
+  description = "Cloud KMS key for Secret Manager CMEK encryption. Must be in the 'global' location. The Secret Manager service account must have roles/cloudkms.cryptoKeyEncrypterDecrypter on this key."
+  type        = string
+
+  validation {
+    condition     = length(var.security_kms_key_name) > 0
+    error_message = "security_kms_key_name must not be empty."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# CI/CD
+# ---------------------------------------------------------------------------
+variable "github_owner" {
+  description = "GitHub repository owner (user or organisation)."
+  type        = string
+  default     = ""
 }
 
 variable "github_repo" {
+  description = "GitHub repository name (without owner prefix)."
   type        = string
-  description = "GitHub repository name for OIDC federated identity."
+  default     = ""
+}
+
+variable "github_branch" {
+  description = "Git branch to trigger Cloud Build on."
+  type        = string
+  default     = "main"
+}
+
+variable "create_cloud_dns" {
+  description = "Whether to create a Cloud DNS managed zone for custom domain."
+  type        = bool
+  default     = false
+}
+
+variable "dns_zone_name" {
+  description = "Cloud DNS managed zone name (only used if create_cloud_dns = true)."
+  type        = string
+  default     = "reporting-zone"
+}
+
+variable "dns_domain" {
+  description = "DNS domain for the managed zone, e.g. reports.example.com. (trailing dot required)"
+  type        = string
+  default     = "reports.example.com."
+}
+
+# ---------------------------------------------------------------------------
+# Monitoring
+# ---------------------------------------------------------------------------
+variable "alert_email" {
+  description = "Email address to receive monitoring alerts."
+  type        = string
+
+  validation {
+    condition     = length(var.alert_email) > 0 && can(regex("^[^@]+@[^@]+\\.[^@]+$", var.alert_email))
+    error_message = "alert_email must be a valid email address."
+  }
+}
+
+variable "alert_high_error_rate_threshold" {
+  description = "5xx error rate threshold (fraction, e.g. 0.05 = 5%) to trigger alert."
+  type        = number
+  default     = 0.05
+}
+
+variable "alert_latency_p95_threshold_ms" {
+  description = "p95 latency threshold in milliseconds to trigger alert."
+  type        = number
+  default     = 10000
+}
+
+variable "alert_sql_disk_threshold" {
+  description = "Cloud SQL disk utilisation fraction threshold (e.g. 0.80 = 80%)."
+  type        = number
+  default     = 0.80
+}
+
+variable "alert_sql_cpu_threshold" {
+  description = "Cloud SQL CPU utilisation fraction threshold (e.g. 0.90 = 90%)."
+  type        = number
+  default     = 0.90
+}
+
+variable "labels" {
+  description = "Common labels to apply to all resources."
+  type        = map(string)
+  default = {
+    environment = "production"
+    application = "django-reporting"
+    managed_by  = "terraform"
+  }
 }

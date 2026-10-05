@@ -1,424 +1,660 @@
-# ── Log Analytics Workspace (via data source — created by monitoring_bootstrap) ─
-data "azurerm_log_analytics_workspace" "main" {
-  name                = "law-${var.project}-${var.environment}"
-  resource_group_name = var.resource_group_name
-}
+# ---------------------------------------------------------------------------
+# Notification Channel — Email
+# ---------------------------------------------------------------------------
+resource "google_monitoring_notification_channel" "email" {
+  project      = var.project_id
+  display_name = "Email Alert — Ops Team"
+  type         = "email"
 
-# ── CMK Storage Account for Log Analytics Workspace ───────────────────────────
-resource "azurerm_storage_account" "law_cmk" {
-  name                            = "stlaw${var.project}${var.environment}"
-  resource_group_name             = var.resource_group_name
-  location                        = var.location
-  account_tier                    = "Standard"
-  account_replication_type        = "ZRS"
-  min_tls_version                 = "TLS1_2"
-  enable_https_traffic_only       = true
-  allow_nested_items_to_be_public = false
-  public_network_access_enabled   = false
-  tags                            = var.tags
-
-  identity {
-    type = "SystemAssigned"
+  labels = {
+    email_address = var.alert_email
   }
 
-  # FIX: Added blob_properties for versioning and soft-delete — consistent with
-  # all other storage accounts in the project. Without this, LAW CMK storage blobs
-  # can be accidentally deleted or overwritten with no recovery path.
-  blob_properties {
-    versioning_enabled  = true
-    change_feed_enabled = true
+  force_delete = false
+}
 
-    delete_retention_policy {
-      days = 30
+# ---------------------------------------------------------------------------
+# Log-based Metric — Django ERROR/CRITICAL log lines
+# ---------------------------------------------------------------------------
+resource "google_logging_metric" "django_error_count" {
+  project     = var.project_id
+  name        = "django_error_critical_count"
+  description = "Count of Django ERROR or CRITICAL log entries from Cloud Run"
+  filter      = <<-EOT
+    resource.type="cloud_run_revision"
+    resource.labels.service_name="${var.cloudrun_service_name}"
+    severity>=ERROR
+  EOT
+
+  metric_descriptor {
+    metric_kind  = "DELTA"
+    value_type   = "INT64"
+    unit         = "1"
+    display_name = "Django ERROR/CRITICAL Log Count"
+
+    labels {
+      key         = "severity"
+      value_type  = "STRING"
+      description = "Log severity level"
     }
+  }
 
-    container_delete_retention_policy {
-      days = 30
+  label_extractors = {
+    "severity" = "EXTRACT(severity)"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Log-based Metric — Cloud SQL slow queries (scoped to reporting instance)
+# ---------------------------------------------------------------------------
+resource "google_logging_metric" "cloudsql_slow_queries" {
+  project     = var.project_id
+  name        = "cloudsql_slow_query_count"
+  description = "Count of Cloud SQL slow query log entries (>500ms) for the reporting instance"
+  filter      = <<-EOT
+    resource.type="cloudsql_database"
+    resource.labels.database_id="${var.project_id}:${var.db_instance_name}"
+    textPayload:"duration:"
+    textPayload:"LOG"
+  EOT
+
+  metric_descriptor {
+    metric_kind  = "DELTA"
+    value_type   = "INT64"
+    unit         = "1"
+    display_name = "Cloud SQL Slow Query Count"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Monitoring Dashboard
+# ---------------------------------------------------------------------------
+resource "google_monitoring_dashboard" "reporting_overview" {
+  project        = var.project_id
+  dashboard_json = jsonencode({
+    displayName = "Django Reporting App — Overview"
+    mosaicLayout = {
+      columns = 12
+      tiles = [
+        {
+          xPos   = 0
+          yPos   = 0
+          width  = 6
+          height = 4
+          widget = {
+            title = "Cloud Run — Request Count"
+            xyChart = {
+              dataSets = [{
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "metric.type=\"run.googleapis.com/request_count\" resource.type=\"cloud_run_revision\" resource.labels.service_name=\"${var.cloudrun_service_name}\""
+                    aggregation = {
+                      alignmentPeriod    = "60s"
+                      perSeriesAligner   = "ALIGN_RATE"
+                      crossSeriesReducer = "REDUCE_SUM"
+                      groupByFields      = ["metric.labels.response_code_class"]
+                    }
+                  }
+                }
+                plotType   = "LINE"
+                targetAxis = "Y1"
+              }]
+              yAxis = { label = "Requests/s", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          xPos   = 6
+          yPos   = 0
+          width  = 6
+          height = 4
+          widget = {
+            title = "Cloud Run — Request Latency (p50/p95/p99)"
+            xyChart = {
+              dataSets = [
+                {
+                  timeSeriesQuery = {
+                    timeSeriesFilter = {
+                      filter = "metric.type=\"run.googleapis.com/request_latencies\" resource.type=\"cloud_run_revision\" resource.labels.service_name=\"${var.cloudrun_service_name}\""
+                      aggregation = {
+                        alignmentPeriod    = "60s"
+                        perSeriesAligner   = "ALIGN_DELTA"
+                        crossSeriesReducer = "REDUCE_PERCENTILE_50"
+                      }
+                    }
+                  }
+                  plotType       = "LINE"
+                  targetAxis     = "Y1"
+                  legendTemplate = "p50"
+                },
+                {
+                  timeSeriesQuery = {
+                    timeSeriesFilter = {
+                      filter = "metric.type=\"run.googleapis.com/request_latencies\" resource.type=\"cloud_run_revision\" resource.labels.service_name=\"${var.cloudrun_service_name}\""
+                      aggregation = {
+                        alignmentPeriod    = "60s"
+                        perSeriesAligner   = "ALIGN_DELTA"
+                        crossSeriesReducer = "REDUCE_PERCENTILE_95"
+                      }
+                    }
+                  }
+                  plotType       = "LINE"
+                  targetAxis     = "Y1"
+                  legendTemplate = "p95"
+                },
+                {
+                  timeSeriesQuery = {
+                    timeSeriesFilter = {
+                      filter = "metric.type=\"run.googleapis.com/request_latencies\" resource.type=\"cloud_run_revision\" resource.labels.service_name=\"${var.cloudrun_service_name}\""
+                      aggregation = {
+                        alignmentPeriod    = "60s"
+                        perSeriesAligner   = "ALIGN_DELTA"
+                        crossSeriesReducer = "REDUCE_PERCENTILE_99"
+                      }
+                    }
+                  }
+                  plotType       = "LINE"
+                  targetAxis     = "Y1"
+                  legendTemplate = "p99"
+                }
+              ]
+              yAxis = { label = "Latency (ms)", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          xPos   = 0
+          yPos   = 4
+          width  = 4
+          height = 4
+          widget = {
+            title = "Cloud Run — Active Instances"
+            xyChart = {
+              dataSets = [{
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "metric.type=\"run.googleapis.com/container/instance_count\" resource.type=\"cloud_run_revision\" resource.labels.service_name=\"${var.cloudrun_service_name}\""
+                    aggregation = {
+                      alignmentPeriod    = "60s"
+                      perSeriesAligner   = "ALIGN_MEAN"
+                      crossSeriesReducer = "REDUCE_SUM"
+                    }
+                  }
+                }
+                plotType   = "LINE"
+                targetAxis = "Y1"
+              }]
+              yAxis = { label = "Instances", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          xPos   = 4
+          yPos   = 4
+          width  = 4
+          height = 4
+          widget = {
+            title = "Cloud SQL — CPU Utilisation"
+            xyChart = {
+              dataSets = [{
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "metric.type=\"cloudsql.googleapis.com/database/cpu/utilization\" resource.type=\"cloudsql_database\" resource.labels.database_id=\"${var.project_id}:${var.db_instance_name}\""
+                    aggregation = {
+                      alignmentPeriod  = "60s"
+                      perSeriesAligner = "ALIGN_MEAN"
+                    }
+                  }
+                }
+                plotType   = "LINE"
+                targetAxis = "Y1"
+              }]
+              yAxis = { label = "CPU Fraction", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          xPos   = 8
+          yPos   = 4
+          width  = 4
+          height = 4
+          widget = {
+            title = "Cloud SQL — Disk Utilisation"
+            xyChart = {
+              dataSets = [{
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "metric.type=\"cloudsql.googleapis.com/database/disk/utilization\" resource.type=\"cloudsql_database\" resource.labels.database_id=\"${var.project_id}:${var.db_instance_name}\""
+                    aggregation = {
+                      alignmentPeriod  = "60s"
+                      perSeriesAligner = "ALIGN_MEAN"
+                    }
+                  }
+                }
+                plotType   = "LINE"
+                targetAxis = "Y1"
+              }]
+              yAxis = { label = "Disk Fraction", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          xPos   = 0
+          yPos   = 8
+          width  = 6
+          height = 4
+          widget = {
+            title = "Cloud SQL — Active Connections"
+            xyChart = {
+              dataSets = [{
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "metric.type=\"cloudsql.googleapis.com/database/postgresql/num_backends\" resource.type=\"cloudsql_database\" resource.labels.database_id=\"${var.project_id}:${var.db_instance_name}\""
+                    aggregation = {
+                      alignmentPeriod  = "60s"
+                      perSeriesAligner = "ALIGN_MEAN"
+                    }
+                  }
+                }
+                plotType   = "LINE"
+                targetAxis = "Y1"
+              }]
+              yAxis = { label = "Connections", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          xPos   = 6
+          yPos   = 8
+          width  = 6
+          height = 4
+          widget = {
+            title = "Django ERROR/CRITICAL Log Count"
+            xyChart = {
+              dataSets = [{
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "metric.type=\"logging.googleapis.com/user/django_error_critical_count\" resource.type=\"cloud_run_revision\""
+                    aggregation = {
+                      alignmentPeriod    = "60s"
+                      perSeriesAligner   = "ALIGN_DELTA"
+                      crossSeriesReducer = "REDUCE_SUM"
+                    }
+                  }
+                }
+                plotType   = "LINE"
+                targetAxis = "Y1"
+              }]
+              yAxis = { label = "Error Count", scale = "LINEAR" }
+            }
+          }
+        },
+      ]
     }
-  }
-
-  network_rules {
-    default_action = "Deny"
-    bypass         = ["AzureServices"]
-  }
-}
-
-# Grant the LAW CMK storage account's system identity Key Vault Crypto User
-resource "azurerm_role_assignment" "law_cmk_storage_kv_crypto" {
-  scope                = var.key_vault_id
-  role_definition_name = "Key Vault Crypto User"
-  principal_id         = azurerm_storage_account.law_cmk.identity[0].principal_id
-}
-
-# Configure CMK on the LAW storage account
-resource "azurerm_storage_account_customer_managed_key" "law_cmk" {
-  storage_account_id = azurerm_storage_account.law_cmk.id
-  key_vault_id       = var.key_vault_id
-  key_name           = var.data_protection_key_name
-
-  depends_on = [azurerm_role_assignment.law_cmk_storage_kv_crypto]
-}
-
-# ── Private Endpoint for LAW CMK Storage Account ──────────────────────────────
-resource "azurerm_private_endpoint" "law_cmk_storage" {
-  name                = "pe-stlaw-${var.project}-${var.environment}"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  subnet_id           = var.subnet_pe_id
-  tags                = var.tags
-
-  private_service_connection {
-    name                           = "psc-stlaw-${var.project}"
-    private_connection_resource_id = azurerm_storage_account.law_cmk.id
-    subresource_names              = ["blob"]
-    is_manual_connection           = false
-  }
-
-  private_dns_zone_group {
-    name                 = "pdnszg-stlaw-blob"
-    private_dns_zone_ids = [var.private_dns_zone_blob_id]
-  }
-
-  depends_on = [azurerm_storage_account_customer_managed_key.law_cmk]
-}
-
-# Link the CMK storage account to the Log Analytics workspace (CustomLogs)
-resource "azurerm_log_analytics_linked_storage_account" "law_cmk" {
-  data_source_type      = "CustomLogs"
-  resource_group_name   = var.resource_group_name
-  workspace_resource_id = data.azurerm_log_analytics_workspace.main.id
-  storage_account_ids   = [azurerm_storage_account.law_cmk.id]
-
-  depends_on = [
-    azurerm_storage_account_customer_managed_key.law_cmk,
-    azurerm_private_endpoint.law_cmk_storage,
-  ]
-}
-
-resource "azurerm_log_analytics_linked_storage_account" "law_cmk_query" {
-  data_source_type      = "Query"
-  resource_group_name   = var.resource_group_name
-  workspace_resource_id = data.azurerm_log_analytics_workspace.main.id
-  storage_account_ids   = [azurerm_storage_account.law_cmk.id]
-
-  depends_on = [
-    azurerm_storage_account_customer_managed_key.law_cmk,
-    azurerm_private_endpoint.law_cmk_storage,
-  ]
-}
-
-# ── Application Insights (Workspace-based) ────────────────────────────────────
-resource "azurerm_application_insights" "main" {
-  name                = "appi-${var.project}-${var.environment}"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  workspace_id        = data.azurerm_log_analytics_workspace.main.id
-  application_type    = "web"
-  retention_in_days   = var.log_retention_days
-  sampling_percentage = var.sampling_percentage
-  # FIX: Disable local (instrumentation key) authentication.
-  # The instrumentation_key is a shared secret that grants unauthenticated write
-  # access to the App Insights instance. Disabling it forces all ingestion through
-  # AAD-authenticated channels using the connection_string only.
-  local_authentication_disabled = true
-  tags                          = var.tags
-}
-
-# ── Action Group (alerts → email) ─────────────────────────────────────────────
-resource "azurerm_monitor_action_group" "main" {
-  name                = "ag-${var.project}-${var.environment}"
-  resource_group_name = var.resource_group_name
-  short_name          = "eshop-ops"
-  tags                = var.tags
-
-  email_receiver {
-    name                    = "OpsEmail"
-    email_address           = var.alert_email
-    use_common_alert_schema = true
-  }
-}
-
-# ── Metric Alert: High CPU on Container App Environment ───────────────────────
-resource "azurerm_monitor_metric_alert" "cpu_high" {
-  name                = "alert-cpu-high-${var.project}"
-  resource_group_name = var.resource_group_name
-  scopes              = ["/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}"]
-  description         = "Alert when CPU usage is consistently high"
-  severity            = 2
-  window_size         = "PT5M"
-  frequency           = "PT1M"
-  tags                = var.tags
-
-  criteria {
-    metric_namespace = "Microsoft.App/containerApps"
-    metric_name      = "CpuUsageNanoCores"
-    aggregation      = "Average"
-    operator         = "GreaterThan"
-    threshold        = 800000000
-  }
-
-  action {
-    action_group_id = azurerm_monitor_action_group.main.id
-  }
-}
-
-# ── Metric Alert: High Memory ─────────────────────────────────────────────────
-resource "azurerm_monitor_metric_alert" "memory_high" {
-  name                = "alert-memory-high-${var.project}"
-  resource_group_name = var.resource_group_name
-  scopes              = ["/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}"]
-  description         = "Alert when memory usage is high"
-  severity            = 2
-  window_size         = "PT5M"
-  frequency           = "PT1M"
-  tags                = var.tags
-
-  criteria {
-    metric_namespace = "Microsoft.App/containerApps"
-    metric_name      = "MemoryWorkingSetBytes"
-    aggregation      = "Average"
-    operator         = "GreaterThan"
-    threshold        = 1610612736
-  }
-
-  action {
-    action_group_id = azurerm_monitor_action_group.main.id
-  }
-}
-
-# ── Metric Alert: SQL DTU / CPU high ─────────────────────────────────────────
-resource "azurerm_monitor_metric_alert" "sql_cpu_high" {
-  name                = "alert-sql-cpu-${var.project}"
-  resource_group_name = var.resource_group_name
-  scopes              = ["/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}"]
-  description         = "Alert when SQL CPU percentage is high"
-  severity            = 2
-  window_size         = "PT15M"
-  frequency           = "PT5M"
-  tags                = var.tags
-
-  criteria {
-    metric_namespace = "Microsoft.Sql/servers/databases"
-    metric_name      = "cpu_percent"
-    aggregation      = "Average"
-    operator         = "GreaterThan"
-    threshold        = 80
-  }
-
-  action {
-    action_group_id = azurerm_monitor_action_group.main.id
-  }
-}
-
-# ── Metric Alert: Redis memory ────────────────────────────────────────────────
-resource "azurerm_monitor_metric_alert" "redis_memory" {
-  name                = "alert-redis-memory-${var.project}"
-  resource_group_name = var.resource_group_name
-  scopes              = ["/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}"]
-  description         = "Alert when Redis used memory is high"
-  severity            = 2
-  window_size         = "PT15M"
-  frequency           = "PT5M"
-  tags                = var.tags
-
-  criteria {
-    metric_namespace = "Microsoft.Cache/Redis"
-    metric_name      = "usedmemorypercentage"
-    aggregation      = "Average"
-    operator         = "GreaterThan"
-    threshold        = 80
-  }
-
-  action {
-    action_group_id = azurerm_monitor_action_group.main.id
-  }
-}
-
-# ── Metric Alert: Log Analytics Daily Data Cap ────────────────────────────────
-resource "azurerm_monitor_metric_alert" "law_data_cap" {
-  name                = "alert-law-datacap-${var.project}"
-  resource_group_name = var.resource_group_name
-  scopes              = [data.azurerm_log_analytics_workspace.main.id]
-  description         = "Alert when Log Analytics daily data cap is approaching — logs may be dropped"
-  severity            = 1
-  window_size         = "PT1H"
-  frequency           = "PT15M"
-  tags                = var.tags
-
-  criteria {
-    metric_namespace = "Microsoft.OperationalInsights/workspaces"
-    metric_name      = "DataCollectionThrottling"
-    aggregation      = "Count"
-    operator         = "GreaterThan"
-    threshold        = 0
-  }
-
-  action {
-    action_group_id = azurerm_monitor_action_group.main.id
-  }
-}
-
-# ── Application Insights Availability Test ────────────────────────────────────
-resource "azurerm_application_insights_standard_web_test" "health" {
-  name                    = "webtest-health-${var.project}"
-  resource_group_name     = var.resource_group_name
-  location                = var.location
-  application_insights_id = azurerm_application_insights.main.id
-  geo_locations           = ["us-ca-sjc-azr", "us-tx-sn1-azr", "us-il-ch1-azr", "us-va-ash-azr", "us-fl-mia-edge"]
-  description             = "Health endpoint availability test"
-  enabled                 = true
-  frequency               = 300
-  timeout                 = 30
-  retry_enabled           = true
-  tags                    = var.tags
-
-  request {
-    url                              = "https://${var.health_check_url}/health"
-    http_verb                        = "GET"
-    parse_dependent_requests_enabled = false
-  }
-
-  validation_rules {
-    expected_status_code        = 200
-    ssl_check_enabled           = true
-    ssl_cert_remaining_lifetime = 14
-  }
-}
-
-resource "azurerm_monitor_metric_alert" "availability_test" {
-  name                = "alert-availability-${var.project}"
-  resource_group_name = var.resource_group_name
-  scopes              = [azurerm_application_insights.main.id]
-  description         = "Alert when web availability drops"
-  severity            = 1
-  window_size         = "PT5M"
-  frequency           = "PT1M"
-  tags                = var.tags
-
-  application_insights_web_test_location_availability_criteria {
-    web_test_id           = azurerm_application_insights_standard_web_test.health.id
-    component_id          = azurerm_application_insights.main.id
-    failed_location_count = 2
-  }
-
-  action {
-    action_group_id = azurerm_monitor_action_group.main.id
-  }
-}
-
-# ── Azure Monitor Workbook (Custom Dashboard) ─────────────────────────────────
-resource "azurerm_application_insights_workbook" "main" {
-  name                = "wb-${var.project}-${var.environment}"
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  display_name        = "eShopOnWeb Operations Dashboard"
-  source_id           = lower(azurerm_application_insights.main.id)
-  tags                = var.tags
-
-  data_json = jsonencode({
-    version = "Notebook/1.0"
-    items = [
-      {
-        type = 1
-        content = {
-          json = "# eShopOnWeb Operations Dashboard\n\nReal-time monitoring for eShopOnWeb production environment."
-        }
-        name = "header"
-      },
-      {
-        type = 3
-        content = {
-          version      = "KqlItem/1.0"
-          query        = "requests | summarize count() by bin(timestamp, 5m) | render timechart"
-          size         = 0
-          title        = "Request Rate (5-minute buckets)"
-          timeContext  = { durationMs = 3600000 }
-          queryType    = 0
-          resourceType = "microsoft.insights/components"
-          crossComponentResources = [azurerm_application_insights.main.id]
-        }
-        name = "requests-chart"
-      },
-      {
-        type = 3
-        content = {
-          version      = "KqlItem/1.0"
-          query        = "requests | where success == false | summarize count() by bin(timestamp, 5m) | render timechart"
-          size         = 0
-          title        = "Failed Requests"
-          timeContext  = { durationMs = 3600000 }
-          queryType    = 0
-          resourceType = "microsoft.insights/components"
-          crossComponentResources = [azurerm_application_insights.main.id]
-        }
-        name = "failures-chart"
-      }
-    ]
-    isLocked            = false
-    fallbackResourceIds = [azurerm_application_insights.main.id]
   })
 }
 
-# ── Log Analytics Saved Searches ───────────────────────────────────────────────
-resource "azurerm_log_analytics_saved_search" "failed_requests" {
-  name                       = "FailedHttpRequests"
-  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.main.id
-  category                   = "eShopOnWeb"
-  display_name               = "Failed HTTP Requests"
-  query                      = <<-KUSTO
-    AppRequests
-    | where Success == false
-    | summarize count() by ResultCode, Name
-    | order by count_ desc
-  KUSTO
+# ---------------------------------------------------------------------------
+# Alert Policy 1 — Cloud Run High 5xx Error Rate
+# ---------------------------------------------------------------------------
+resource "google_monitoring_alert_policy" "cloudrun_high_error_rate" {
+  project      = var.project_id
+  display_name = "Cloud Run — High 5xx Error Rate"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "5xx error rate > ${var.alert_high_error_rate_threshold * 100}% for 5 minutes"
+
+    condition_threshold {
+      filter = <<-EOT
+        metric.type="run.googleapis.com/request_count"
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="${var.cloudrun_service_name}"
+        metric.labels.response_code_class="5xx"
+      EOT
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_RATE"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.alert_high_error_rate_threshold
+      duration        = "300s"
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = [google_monitoring_notification_channel.email.name]
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+
+  documentation {
+    content   = "Cloud Run service **${var.cloudrun_service_name}** is returning 5xx errors above ${var.alert_high_error_rate_threshold * 100}%.\n\n**Runbook**: https://console.cloud.google.com/run/detail/${var.region}/${var.cloudrun_service_name}/logs"
+    mime_type = "text/markdown"
+  }
+
+  user_labels = var.labels
 }
 
-resource "azurerm_log_analytics_saved_search" "slow_queries" {
-  name                       = "SlowDatabaseQueries"
-  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.main.id
-  category                   = "eShopOnWeb"
-  display_name               = "Slow Database Queries (>1s)"
-  query                      = <<-KUSTO
-    AppDependencies
-    | where Type == "SQL"
-    | where DurationMs > 1000
-    | summarize avg(DurationMs), count() by Name
-    | order by avg_DurationMs desc
-  KUSTO
+# ---------------------------------------------------------------------------
+# Alert Policy 2 — Cloud Run p95 Latency
+# ---------------------------------------------------------------------------
+resource "google_monitoring_alert_policy" "cloudrun_high_latency" {
+  project      = var.project_id
+  display_name = "Cloud Run — High p95 Latency"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "p95 latency > ${var.alert_latency_p95_threshold_ms}ms for 5 minutes"
+
+    condition_threshold {
+      filter = <<-EOT
+        metric.type="run.googleapis.com/request_latencies"
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="${var.cloudrun_service_name}"
+      EOT
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_DELTA"
+        cross_series_reducer = "REDUCE_PERCENTILE_95"
+      }
+
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.alert_latency_p95_threshold_ms
+      duration        = "300s"
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = [google_monitoring_notification_channel.email.name]
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+
+  documentation {
+    content   = "Cloud Run **${var.cloudrun_service_name}** p95 latency exceeded ${var.alert_latency_p95_threshold_ms}ms.\n\n**Action**: Check Cloud SQL slow query logs and Cloud Run CPU metrics."
+    mime_type = "text/markdown"
+  }
+
+  user_labels = var.labels
 }
 
-resource "azurerm_log_analytics_saved_search" "exceptions" {
-  name                       = "ApplicationExceptions"
-  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.main.id
-  category                   = "eShopOnWeb"
-  display_name               = "Application Exceptions"
-  query                      = <<-KUSTO
-    AppExceptions
-    | summarize count() by ExceptionType, OuterMessage
-    | order by count_ desc
-  KUSTO
+# ---------------------------------------------------------------------------
+# Alert Policy 3 — Cloud SQL High Disk Utilisation
+# ---------------------------------------------------------------------------
+resource "google_monitoring_alert_policy" "cloudsql_disk_high" {
+  project      = var.project_id
+  display_name = "Cloud SQL — High Disk Utilisation"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Cloud SQL disk utilisation > ${var.alert_sql_disk_threshold * 100}%"
+
+    condition_threshold {
+      filter = <<-EOT
+        metric.type="cloudsql.googleapis.com/database/disk/utilization"
+        resource.type="cloudsql_database"
+        resource.labels.database_id="${var.project_id}:${var.db_instance_name}"
+      EOT
+
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_MEAN"
+      }
+
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.alert_sql_disk_threshold
+      duration        = "300s"
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = [google_monitoring_notification_channel.email.name]
+
+  alert_strategy {
+    auto_close = "86400s"
+  }
+
+  documentation {
+    content   = "Cloud SQL disk at or above ${var.alert_sql_disk_threshold * 100}% utilisation.\n\n**Action**: Review data retention, run VACUUM FULL if needed, verify autoresize."
+    mime_type = "text/markdown"
+  }
+
+  user_labels = var.labels
 }
 
-# ── Diagnostic Setting for LAW CMK storage blob ───────────────────────────────
-resource "azurerm_monitor_diagnostic_setting" "law_cmk_storage_blob" {
-  name                       = "diag-stlaw-blob-${var.project}"
-  target_resource_id         = "${azurerm_storage_account.law_cmk.id}/blobServices/default"
-  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.main.id
+# ---------------------------------------------------------------------------
+# Alert Policy 4 — Cloud SQL High CPU
+# ---------------------------------------------------------------------------
+resource "google_monitoring_alert_policy" "cloudsql_cpu_high" {
+  project      = var.project_id
+  display_name = "Cloud SQL — High CPU Utilisation"
+  combiner     = "OR"
 
-  enabled_log {
-    category = "StorageRead"
+  conditions {
+    display_name = "Cloud SQL CPU > ${var.alert_sql_cpu_threshold * 100}% for 10 minutes"
+
+    condition_threshold {
+      filter = <<-EOT
+        metric.type="cloudsql.googleapis.com/database/cpu/utilization"
+        resource.type="cloudsql_database"
+        resource.labels.database_id="${var.project_id}:${var.db_instance_name}"
+      EOT
+
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_MEAN"
+      }
+
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.alert_sql_cpu_threshold
+      duration        = "600s"
+
+      trigger {
+        count = 1
+      }
+    }
   }
 
-  enabled_log {
-    category = "StorageWrite"
+  notification_channels = [google_monitoring_notification_channel.email.name]
+
+  alert_strategy {
+    auto_close = "3600s"
   }
 
-  enabled_log {
-    category = "StorageDelete"
+  documentation {
+    content   = "Cloud SQL CPU above ${var.alert_sql_cpu_threshold * 100}% for 10 minutes.\n\n**Action**: Check pg_stat_activity for long-running queries. Consider upgrading the instance tier."
+    mime_type = "text/markdown"
   }
 
-  metric {
-    category = "AllMetrics"
-    enabled  = true
+  user_labels = var.labels
+}
+
+# ---------------------------------------------------------------------------
+# Alert Policy 5 — Cloud Run Instance Count at Maximum
+# ---------------------------------------------------------------------------
+resource "google_monitoring_alert_policy" "cloudrun_at_max_instances" {
+  project      = var.project_id
+  display_name = "Cloud Run — Instance Count at Maximum"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Active instances = ${var.cloudrun_max_instances} (max) for 5 minutes"
+
+    condition_threshold {
+      filter = <<-EOT
+        metric.type="run.googleapis.com/container/instance_count"
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="${var.cloudrun_service_name}"
+        metric.labels.state="active"
+      EOT
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_MEAN"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+
+      comparison      = "COMPARISON_GE"
+      threshold_value = var.cloudrun_max_instances
+      duration        = "300s"
+
+      trigger {
+        count = 1
+      }
+    }
   }
+
+  notification_channels = [google_monitoring_notification_channel.email.name]
+
+  alert_strategy {
+    auto_close = "3600s"
+  }
+
+  documentation {
+    content   = "Cloud Run **${var.cloudrun_service_name}** reached max instances (${var.cloudrun_max_instances}). Consider increasing `cloudrun_max_instances`."
+    mime_type = "text/markdown"
+  }
+
+  user_labels = var.labels
+}
+
+# ---------------------------------------------------------------------------
+# Alert Policy 6 — Django Application Error Spike
+# ---------------------------------------------------------------------------
+resource "google_monitoring_alert_policy" "django_error_spike" {
+  project      = var.project_id
+  display_name = "Django — Application Error/Critical Log Spike"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Django ERROR/CRITICAL log count > 10 in 5 minutes"
+
+    condition_threshold {
+      filter = <<-EOT
+        metric.type="logging.googleapis.com/user/django_error_critical_count"
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="${var.cloudrun_service_name}"
+      EOT
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_DELTA"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+
+      comparison      = "COMPARISON_GT"
+      threshold_value = 10
+      duration        = "0s"
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = [google_monitoring_notification_channel.email.name]
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+
+  documentation {
+    content   = "Django application producing >10 ERROR/CRITICAL log entries in 5 minutes.\n\n**Action**: Filter Cloud Logging for severity>=ERROR on **${var.cloudrun_service_name}**."
+    mime_type = "text/markdown"
+  }
+
+  user_labels = var.labels
+}
+
+# ---------------------------------------------------------------------------
+# Log bucket — Cloud Run logs (regional, CMEK-encrypted)
+# CMEK: log_bucket_kms_key_name must be in the same region as the bucket.
+# Grant the logging service account CryptoKeyEncrypterDecrypter on the key
+# before applying (see README Prerequisites).
+# ---------------------------------------------------------------------------
+resource "google_logging_project_bucket_config" "cloudrun_logs" {
+  project        = var.project_id
+  location       = var.region
+  bucket_id      = "cloudrun-reporting-logs"
+  retention_days = 30
+  description    = "Log bucket for Django reporting Cloud Run service logs"
+
+  # CMEK encryption — consistent with production-grade at-rest encryption posture
+  cmek_settings {
+    kms_key_name = var.log_bucket_kms_key_name
+  }
+}
+
+# Grant the sink writer identity permission to write to this bucket
+resource "google_project_iam_member" "cloudrun_sink_writer" {
+  project = var.project_id
+  role    = "roles/logging.bucketWriter"
+  member  = google_logging_project_sink.cloudrun_sink.writer_identity
+}
+
+resource "google_logging_project_sink" "cloudrun_sink" {
+  project                = var.project_id
+  name                   = "sink-cloudrun-reporting"
+  destination            = "logging.googleapis.com/projects/${var.project_id}/locations/${var.region}/buckets/cloudrun-reporting-logs"
+  unique_writer_identity = true
+
+  filter = <<-EOT
+    resource.type="cloud_run_revision"
+    resource.labels.service_name="${var.cloudrun_service_name}"
+  EOT
+
+  depends_on = [google_logging_project_bucket_config.cloudrun_logs]
+}
+
+# ---------------------------------------------------------------------------
+# Log bucket — Cloud SQL logs (regional, CMEK-encrypted)
+# ---------------------------------------------------------------------------
+resource "google_logging_project_bucket_config" "cloudsql_logs" {
+  project        = var.project_id
+  location       = var.region
+  bucket_id      = "cloudsql-reporting-logs"
+  retention_days = 30
+  description    = "Log bucket for Cloud SQL slow query and audit logs (reporting instance only)"
+
+  # CMEK encryption — consistent with production-grade at-rest encryption posture
+  cmek_settings {
+    kms_key_name = var.log_bucket_kms_key_name
+  }
+}
+
+# Grant the sink writer identity permission to write to this bucket
+resource "google_project_iam_member" "cloudsql_sink_writer" {
+  project = var.project_id
+  role    = "roles/logging.bucketWriter"
+  member  = google_logging_project_sink.cloudsql_sink.writer_identity
+}
+
+resource "google_logging_project_sink" "cloudsql_sink" {
+  project                = var.project_id
+  name                   = "sink-cloudsql-reporting"
+  destination            = "logging.googleapis.com/projects/${var.project_id}/locations/${var.region}/buckets/cloudsql-reporting-logs"
+  unique_writer_identity = true
+
+  filter = <<-EOT
+    resource.type="cloudsql_database"
+    resource.labels.database_id="${var.project_id}:${var.db_instance_name}"
+  EOT
+
+  depends_on = [google_logging_project_bucket_config.cloudsql_logs]
 }

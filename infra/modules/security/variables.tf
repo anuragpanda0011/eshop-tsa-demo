@@ -1,60 +1,61 @@
-variable "resource_group_name" {
-  type = string
-}
-
-variable "location" {
-  type = string
-}
-
-variable "project" {
-  type = string
-}
-
-variable "environment" {
-  type = string
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
-}
-
-variable "subnet_pe_id" {
+variable "project_id" {
+  description = "GCP project ID."
   type        = string
-  description = "Subnet ID for private endpoints."
+
+  validation {
+    condition     = length(var.project_id) > 0
+    error_message = "project_id must not be empty."
+  }
 }
 
-variable "vnet_id" {
+variable "region" {
+  description = "GCP region."
   type        = string
-  description = "Virtual network resource ID."
 }
 
-variable "log_analytics_workspace_id" {
+variable "pdf_bucket_name" {
+  description = "Name of the PDF reports Cloud Storage bucket (for IAM binding scope)."
   type        = string
-  description = "Log Analytics Workspace resource ID for diagnostic settings."
+
+  validation {
+    condition     = length(var.pdf_bucket_name) > 0
+    error_message = "pdf_bucket_name must not be empty."
+  }
 }
 
-variable "tenant_id" {
+variable "artifact_registry_repo_id" {
+  description = "Artifact Registry repository ID (used to scope Cloud Build IAM to the specific repo)."
   type        = string
-  description = "Azure Active Directory tenant ID."
+
+  validation {
+    condition     = length(var.artifact_registry_repo_id) > 0
+    error_message = "artifact_registry_repo_id must not be empty."
+  }
 }
 
-variable "current_object_id" {
+variable "db_instance_name_prefix" {
+  description = "Cloud SQL instance name prefix used in IAM condition to scope sql.client role. Must match the db_instance_name root variable."
   type        = string
-  description = "Object ID of the current deploying principal (Terraform SP or user)."
+  default     = "cloudsql-reporting"
+
+  validation {
+    condition     = length(var.db_instance_name_prefix) > 0
+    error_message = "db_instance_name_prefix must not be empty."
+  }
 }
 
-variable "private_dns_zone_keyvault_id" {
+variable "kms_key_name" {
+  description = "Cloud KMS key resource name for Secret Manager CMEK encryption. The key must be in the 'global' location for Secret Manager auto-replication. Format: projects/<project>/locations/global/keyRings/<ring>/cryptoKeys/<key>. The Secret Manager service agent must have roles/cloudkms.cryptoKeyEncrypterDecrypter on this key."
   type        = string
-  description = "Resource ID of the Key Vault private DNS zone (from network module)."
+
+  validation {
+    condition     = length(var.kms_key_name) > 0
+    error_message = "kms_key_name must not be empty. Provide a Cloud KMS key for Secret Manager CMEK encryption."
+  }
 }
 
-variable "private_dns_zone_blob_id" {
-  type        = string
-  description = "Resource ID of the blob storage private DNS zone (from network module), used for audit storage private endpoint."
-}
-
-variable "subscription_id" {
-  type        = string
-  description = "Azure Subscription ID, used for constructing scope references."
+variable "labels" {
+  description = "Labels to apply to resources."
+  type        = map(string)
+  default     = {}
 }

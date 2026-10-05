@@ -1,64 +1,90 @@
-# Copy this file to terraform.tfvars and fill in the values.
-# NEVER commit terraform.tfvars with real secrets to source control.
+# Copy this file to terraform.tfvars and fill in real values.
+# DO NOT commit terraform.tfvars to source control — add it to .gitignore.
+# DO NOT commit backend.hcl to source control — add it to .gitignore.
+# DO commit .terraform.lock.hcl to source control after terraform init.
+#
+# CI must run: terraform init -backend-config=backend.hcl -lockfile=readonly
 
-subscription_id    = "00000000-0000-0000-0000-000000000000"
-location           = "eastus2"
-location_secondary = "westus2"
-environment        = "prod"
-project            = "eshoponweb"
+# ---------------------------------------------------------------------------
+# Required — must set these
+# ---------------------------------------------------------------------------
+project_id  = "my-gcp-project-id"
+alert_email = "ops@example.com"
 
-# Networking
-vnet_address_space = ["10.10.0.0/16"]
-subnet_apim_cidr   = "10.10.9.0/27"
+# CORS origins for PDF bucket signed-URL downloads — no wildcards allowed.
+cors_allowed_origins = ["https://app.example.com"]
 
-# DNS
-custom_domain           = "shop.contoso.com"
-dns_zone_name           = "contoso.com"
-dns_zone_resource_group = "rg-dns"
+# ---------------------------------------------------------------------------
+# CMEK — Customer-Managed Encryption Keys (REQUIRED)
+# Create key rings and keys before terraform apply (see README Prerequisites).
+# ---------------------------------------------------------------------------
 
-# AAD SQL Administrator — provide object ID of a dedicated AAD group.
-# Do NOT use a managed identity principal ID here.
-aad_sql_admin_object_id = "00000000-0000-0000-0000-000000000000"
+# KMS key for GCS bucket encryption (must be in the same region as buckets).
+kms_key_name = "projects/my-gcp-project-id/locations/us-central1/keyRings/reporting-keyring/cryptoKeys/reporting-storage-key"
 
-# APIM
-apim_publisher_email = "admin@contoso.com"
-apim_publisher_name  = "eShopOnWeb Team"
-apim_sku             = "Standard_1"
-apim_tenant_id       = "00000000-0000-0000-0000-000000000000"
-apim_audience        = "api://00000000-0000-0000-0000-000000000000"
+# KMS key for Cloud Logging bucket encryption (must be in the same region).
+log_bucket_kms_key_name = "projects/my-gcp-project-id/locations/us-central1/keyRings/reporting-keyring/cryptoKeys/reporting-logging-key"
 
-# Static Web App AAD authentication
-# Create an Azure AD App Registration and provide the client ID and a generated secret.
-# Set the redirect URI to: https://<swa-default-hostname>/.auth/login/aad/callback
-swa_aad_client_id     = "00000000-0000-0000-0000-000000000000"
-swa_aad_client_secret = "REPLACE_WITH_AAD_APP_CLIENT_SECRET"  # Mark as sensitive — use env var TF_VAR_swa_aad_client_secret
+# KMS key for Secret Manager encryption (must be in the 'global' location).
+security_kms_key_name = "projects/my-gcp-project-id/locations/global/keyRings/reporting-keyring/cryptoKeys/reporting-secrets-key"
 
-# Container images — must use pinned digest or specific tag, never :latest
-web_image = "mcr.microsoft.com/dotnet/aspnet:8.0.12-jammy-chiseled"
-api_image = "mcr.microsoft.com/dotnet/aspnet:8.0.12-jammy-chiseled"
+# ---------------------------------------------------------------------------
+# Optional overrides (defaults shown)
+# ---------------------------------------------------------------------------
+region         = "us-central1"
+zone_primary   = "us-central1-b"
+zone_secondary = "us-central1-c"
 
-# GitHub
-github_org      = "contoso"
-github_repo     = "eShopOnWeb"
-github_branch   = "main"
-github_repo_url = "https://github.com/contoso/eShopOnWeb"
+vpc_name              = "vpc-reporting"
+subnet_connector_cidr = "10.8.0.0/28"
+subnet_cloudsql_cidr  = "10.8.1.0/29"
+psa_range_name        = "psa-range-reporting"
+psa_cidr_prefix       = "10.100.0.0/16"
+connector_name        = "connector-reporting"
 
-# Monitoring
-log_retention_days               = 90
-alert_email                      = "ops@contoso.com"
-app_insights_sampling_percentage = 20
-# Obtain after first apply: terraform output -raw log_analytics_workspace_guid
-log_analytics_workspace_guid = "00000000-0000-0000-0000-000000000000"
+db_instance_name       = "cloudsql-reporting"
+db_tier                = "db-g1-small"
+db_postgres_version    = "POSTGRES_15"
+db_name                = "reporting"
+db_user                = "reporting_app"
+db_deletion_protection = true
 
-# Scaling
-web_min_replicas = 2
-web_max_replicas = 20
-api_min_replicas = 2
-api_max_replicas = 15
+cloudrun_service_name    = "cloudrun-reporting"
+cloudrun_min_instances   = 1
+cloudrun_max_instances   = 5
+cloudrun_memory          = "1Gi"
+cloudrun_cpu             = "1000m"
+cloudrun_timeout_seconds = 300
 
-tags = {
-  project     = "eshoponweb"
-  environment = "prod"
+# SECURITY: Both default to false. Set to true ONLY after deploying a Cloud
+# Armor security policy + HTTPS Load Balancer (see README).
+cloudrun_allow_unauthenticated = false
+waf_policy_acknowledged        = false
+
+# Required when waf_policy_acknowledged = true — must name a real, deployed
+# Cloud Armor security policy in the same project.
+# cloud_armor_policy_name = "django-reporting-waf"
+
+artifact_registry_repo_id    = "reporting"
+artifact_registry_keep_count = 10
+
+pdf_bucket_name_prefix   = "pdf-reports"
+pdf_bucket_nearline_days = 90
+pdf_bucket_coldline_days = 365
+pdf_bucket_delete_days   = 2555
+
+# CI/CD — set these if using Cloud Build GitHub trigger
+github_owner  = "my-github-org"
+github_repo   = "django-reporting-app"
+github_branch = "main"
+
+# DNS — set create_cloud_dns = true to provision a Cloud DNS zone
+create_cloud_dns = false
+dns_zone_name    = "reporting-zone"
+dns_domain       = "reports.example.com."
+
+labels = {
+  environment = "production"
+  application = "django-reporting"
   managed_by  = "terraform"
-  cost_center = "12345"
 }

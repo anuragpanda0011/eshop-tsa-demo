@@ -1,35 +1,49 @@
-output "log_analytics_workspace_id" {
-  value = data.azurerm_log_analytics_workspace.main.id
+output "notification_channel_id" {
+  description = "Resource ID of the email notification channel."
+  value       = google_monitoring_notification_channel.email.name
 }
 
-output "log_analytics_workspace_name" {
-  value = data.azurerm_log_analytics_workspace.main.name
+output "dashboard_name" {
+  description = "Resource name of the monitoring dashboard."
+  value       = google_monitoring_dashboard.reporting_overview.id
 }
 
-output "app_insights_id" {
-  value = azurerm_application_insights.main.id
+output "alert_policy_error_rate_id" {
+  description = "Resource name of the high error rate alert policy."
+  value       = google_monitoring_alert_policy.cloudrun_high_error_rate.name
 }
 
-# FIX: instrumentation_key output REMOVED.
-# The instrumentation key is a legacy shared secret granting unauthenticated
-# write access to App Insights. With local_authentication_disabled = true,
-# key-based ingestion is disabled. Use connection_string only.
-# Removing this output prevents accidental exposure via terraform output or
-# state access by parties who should not have write access to telemetry.
-
-output "app_insights_connection_string" {
-  value     = azurerm_application_insights.main.connection_string
-  sensitive = true
+output "alert_policy_latency_id" {
+  description = "Resource name of the high latency alert policy."
+  value       = google_monitoring_alert_policy.cloudrun_high_latency.name
 }
 
-output "app_insights_secret_name" {
-  value = "appinsights-connection-string"
+output "alert_policy_sql_disk_id" {
+  description = "Resource name of the Cloud SQL disk alert policy."
+  value       = google_monitoring_alert_policy.cloudsql_disk_high.name
 }
 
-output "action_group_id" {
-  value = azurerm_monitor_action_group.main.id
+output "alert_policy_sql_cpu_id" {
+  description = "Resource name of the Cloud SQL CPU alert policy."
+  value       = google_monitoring_alert_policy.cloudsql_cpu_high.name
 }
 
-output "workbook_id" {
-  value = azurerm_application_insights_workbook.main.id
+output "alert_policy_max_instances_id" {
+  description = "Resource name of the Cloud Run max instances alert policy."
+  value       = google_monitoring_alert_policy.cloudrun_at_max_instances.name
+}
+
+output "alert_policy_django_errors_id" {
+  description = "Resource name of the Django error spike alert policy."
+  value       = google_monitoring_alert_policy.django_error_spike.name
+}
+
+output "cloudrun_log_bucket_id" {
+  description = "ID of the Cloud Logging bucket for Cloud Run logs."
+  value       = google_logging_project_bucket_config.cloudrun_logs.id
+}
+
+output "cloudsql_log_bucket_id" {
+  description = "ID of the Cloud Logging bucket for Cloud SQL logs."
+  value       = google_logging_project_bucket_config.cloudsql_logs.id
 }

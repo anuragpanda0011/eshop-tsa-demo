@@ -1,246 +1,130 @@
-variable "resource_group_name" {
-  type = string
-}
-
-variable "location" {
-  type = string
-}
-
-variable "location_secondary" {
-  type = string
-}
-
-variable "project" {
-  type = string
-}
-
-variable "environment" {
-  type = string
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
-}
-
-variable "subnet_aca_infra_id" {
-  type = string
-}
-
-variable "subnet_apim_id" {
+variable "project_id" {
+  description = "GCP project ID."
   type        = string
-  description = "Subnet ID for the APIM External VNet integration."
 }
 
-variable "vnet_id" {
-  type = string
-}
-
-variable "subnet_pe_id" {
-  type = string
-}
-
-variable "private_dns_zone_acr_id" {
-  type = string
-}
-
-variable "private_dns_zone_blob_id" {
-  type = string
-}
-
-variable "key_vault_id" {
-  type = string
-}
-
-variable "key_vault_uri" {
-  type = string
-}
-
-variable "managed_identity_web_id" {
-  type = string
-}
-
-variable "managed_identity_api_id" {
-  type = string
-}
-
-variable "managed_identity_apim_id" {
+variable "region" {
+  description = "GCP region."
   type        = string
-  description = "Resource ID of the dedicated APIM user-assigned managed identity. Must be separate from managed_identity_api_id."
 }
 
-variable "managed_identity_web_client_id" {
-  type = string
-}
-
-variable "managed_identity_api_client_id" {
-  type = string
-}
-
-variable "managed_identity_web_principal_id" {
-  type = string
-}
-
-variable "managed_identity_api_principal_id" {
-  type = string
-}
-
-variable "app_insights_connection_string" {
-  type      = string
-  sensitive = true
-}
-
-variable "app_insights_secret_name" {
+variable "cloudrun_service_name" {
+  description = "Name of the Cloud Run service."
   type        = string
-  description = "Name of the Key Vault secret holding the App Insights connection string."
-  default     = "appinsights-connection-string"
 }
 
-variable "log_analytics_workspace_id" {
-  type = string
+variable "cloudrun_min_instances" {
+  description = "Minimum Cloud Run instances."
+  type        = number
+  default     = 1
 }
 
-variable "web_image" {
+variable "cloudrun_max_instances" {
+  description = "Maximum Cloud Run instances."
+  type        = number
+  default     = 5
+}
+
+variable "cloudrun_concurrency" {
+  description = "Maximum concurrent requests per Cloud Run instance."
+  type        = number
+  default     = 80
+}
+
+variable "cloudrun_cpu" {
+  description = "CPU allocation for each Cloud Run instance (e.g. '1000m')."
   type        = string
-  description = "Container image for the Web app. Must be a pinned digest reference."
-
-  validation {
-    condition     = !endswith(var.web_image, ":latest") && (contains(split(":", var.web_image), length(split(":", var.web_image)) > 1 ? split(":", var.web_image)[1] : "") || strcontains(var.web_image, "@sha256:"))
-    error_message = "web_image must use a pinned tag or digest. Floating ':latest' is not permitted."
-  }
+  default     = "1000m"
 }
 
-variable "api_image" {
+variable "cloudrun_memory" {
+  description = "Memory allocation for each Cloud Run instance (e.g. '1Gi')."
   type        = string
-  description = "Container image for the API app. Must be a pinned digest reference."
-
-  validation {
-    condition     = !endswith(var.api_image, ":latest") && (contains(split(":", var.api_image), length(split(":", var.api_image)) > 1 ? split(":", var.api_image)[1] : "") || strcontains(var.api_image, "@sha256:"))
-    error_message = "api_image must use a pinned tag or digest. Floating ':latest' is not permitted."
-  }
+  default     = "1Gi"
 }
 
-variable "web_min_replicas" {
-  type    = number
-  default = 2
+variable "cloudrun_timeout_seconds" {
+  description = "Request timeout for Cloud Run service in seconds."
+  type        = number
+  default     = 300
 }
 
-variable "web_max_replicas" {
-  type    = number
-  default = 20
+variable "cloudrun_allow_unauthenticated" {
+  description = "Whether to allow unauthenticated public invocations via the HTTPS LB. Requires waf_policy_acknowledged=true and a real Cloud Armor security policy referenced by cloud_armor_policy_name."
+  type        = bool
+  # SECURITY: default to false — explicit opt-in required.
+  default     = false
 }
 
-variable "api_min_replicas" {
-  type    = number
-  default = 2
+variable "waf_policy_acknowledged" {
+  description = "Set to true ONLY after a Cloud Armor WAF policy (named by cloud_armor_policy_name) and HTTPS Load Balancer are deployed and verified. A data source lookup validates the policy exists at plan time."
+  type        = bool
+  # SECURITY: default to false — explicit opt-in required.
+  default     = false
 }
 
-variable "api_max_replicas" {
-  type    = number
-  default = 15
-}
-
-variable "web_cpu" {
-  type    = string
-  default = "1.0"
-}
-
-variable "web_memory" {
-  type    = string
-  default = "2Gi"
-}
-
-variable "api_cpu" {
-  type    = string
-  default = "0.75"
-}
-
-variable "api_memory" {
-  type    = string
-  default = "1.5Gi"
-}
-
-variable "github_repo_url" {
-  type    = string
-  default = ""
-}
-
-variable "github_branch" {
-  type    = string
-  default = "main"
-}
-
-variable "swa_sku_tier" {
-  type    = string
-  default = "Standard"
-}
-
-# FIX: Added AAD authentication variables for Static Web App.
-variable "swa_aad_client_id" {
+variable "cloud_armor_policy_name" {
+  description = "Name of an existing Cloud Armor security policy in the same project. Required when waf_policy_acknowledged=true. Used to validate WAF deployment via a data source lookup."
   type        = string
-  description = "Azure AD App Registration client ID for Static Web App AAD authentication. Required to enforce authentication via Terraform."
+  default     = ""
 }
 
-variable "swa_aad_client_secret" {
+variable "cloudrun_service_account_email" {
+  description = "Email of the service account to attach to Cloud Run."
+  type        = string
+}
+
+variable "vpc_connector_id" {
+  description = "Resource ID of the Serverless VPC Access Connector."
+  type        = string
+}
+
+variable "db_host" {
+  description = "Private IP address of the Cloud SQL instance."
   type        = string
   sensitive   = true
-  description = "Azure AD App Registration client secret for Static Web App AAD authentication. Stored as a SWA application secret."
 }
 
-variable "apim_publisher_email" {
-  type = string
-}
-
-variable "apim_publisher_name" {
-  type = string
-}
-
-variable "apim_sku" {
+variable "db_name" {
+  description = "PostgreSQL database name."
   type        = string
-  default     = "Standard_1"
-  description = "APIM SKU. Defaults to Standard_1 (production-grade with SLA). Developer_1 is rejected in production environments."
-
-  validation {
-    condition     = !(var.apim_sku == "Developer_1")
-    error_message = "Developer_1 SKU has no SLA and must not be used in production. Use Standard_1 or higher."
-  }
 }
 
-variable "apim_tenant_id" {
+variable "db_user" {
+  description = "PostgreSQL user name."
   type        = string
-  description = "Azure AD tenant ID for APIM JWT validation."
 }
 
-variable "apim_audience" {
+variable "db_password_secret_id" {
+  description = "Resource ID of the Secret Manager secret holding the DB password."
   type        = string
-  description = "Application ID URI for JWT audience validation in APIM policy."
 }
 
-variable "custom_domain" {
-  type    = string
-  default = "shop.contoso.com"
-}
-
-variable "front_door_id" {
+variable "pdf_bucket_name" {
+  description = "Name of the PDF reports Cloud Storage bucket."
   type        = string
-  default     = ""
-  description = "Resource ID of the Front Door profile."
 }
 
-variable "nat_gateway_id" {
+variable "django_settings_module" {
+  description = "Django settings module path."
   type        = string
-  default     = ""
-  description = "Resource ID of the NAT gateway."
+  default     = "config.settings.production"
 }
 
-variable "data_protection_key_id" {
+variable "artifact_registry_repo_id" {
+  description = "Artifact Registry repository ID."
   type        = string
-  default     = ""
-  description = "Key Vault key ID (versioned) for ASP.NET Data Protection ring encryption env var."
+  default     = "reporting"
 }
 
-variable "data_protection_key_name" {
-  type        = string
-  default     = "data-protection-key"
-  description = "Key Vault key name for the storage account CMK configuration."
+variable "artifact_registry_keep_count" {
+  description = "Number of most-recent tagged Docker images to retain."
+  type        = number
+  default     = 10
+}
+
+variable "labels" {
+  description = "Labels to apply to resources."
+  type        = map(string)
+  default     = {}
 }

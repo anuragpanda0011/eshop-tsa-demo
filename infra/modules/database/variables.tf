@@ -1,122 +1,95 @@
-variable "resource_group_name" {
-  type = string
-}
-
-variable "location" {
-  type = string
-}
-
-variable "project" {
-  type = string
-}
-
-variable "environment" {
-  type = string
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
-}
-
-variable "subnet_pe_id" {
-  type = string
-}
-
-variable "subnet_redis_id" {
-  type = string
-}
-
-variable "vnet_id" {
-  type = string
-}
-
-variable "sql_sku" {
-  type    = string
-  default = "GP_Gen5_2"
-}
-
-variable "sql_max_size_gb" {
-  type    = number
-  default = 32
-}
-
-variable "sql_zone_redundant" {
-  type    = bool
-  default = true
-}
-
-variable "redis_sku" {
-  type    = string
-  default = "Standard"
-}
-
-variable "redis_family" {
-  type    = string
-  default = "C"
-}
-
-variable "redis_capacity" {
-  type    = number
-  default = 1
-}
-
-variable "log_analytics_workspace_id" {
-  type = string
-}
-
-variable "private_dns_zone_sql_id" {
-  type = string
-}
-
-variable "private_dns_zone_redis_id" {
-  type = string
-}
-
-variable "key_vault_id" {
-  type = string
-}
-
-variable "managed_identity_web_principal_id" {
-  type = string
-}
-
-variable "managed_identity_api_principal_id" {
-  type = string
-}
-
-variable "aad_sql_admin_object_id" {
+variable "project_id" {
+  description = "GCP project ID."
   type        = string
-  description = "Object ID of the AAD group or user to set as SQL AAD administrator."
 
   validation {
-    condition     = length(var.aad_sql_admin_object_id) > 0
-    error_message = "aad_sql_admin_object_id must be a non-empty AAD object ID."
+    condition     = length(var.project_id) > 0
+    error_message = "project_id must not be empty."
   }
 }
 
-variable "tenant_id" {
+variable "region" {
+  description = "GCP region."
   type        = string
-  description = "Azure AD tenant ID for AAD SQL admin configuration."
+}
+
+variable "zone_primary" {
+  description = "Primary GCP zone for the Cloud SQL instance."
+  type        = string
+}
+
+variable "zone_secondary" {
+  description = "Secondary GCP zone for the Cloud SQL HA standby."
+  type        = string
+}
+
+variable "vpc_id" {
+  description = "VPC network resource ID (self_link) for Cloud SQL private IP."
+  type        = string
+}
+
+variable "db_instance_name" {
+  description = "Name of the Cloud SQL instance."
+  type        = string
 
   validation {
-    condition     = length(var.tenant_id) > 0
-    error_message = "tenant_id must be provided."
+    condition     = length(var.db_instance_name) > 0
+    error_message = "db_instance_name must not be empty."
   }
 }
 
-variable "audit_storage_primary_blob_endpoint" {
+variable "db_tier" {
+  description = "Cloud SQL machine tier."
   type        = string
-  description = "Primary blob endpoint of the immutable audit storage account."
+  default     = "db-g1-small"
 }
 
-variable "audit_storage_account_id" {
+variable "db_postgres_version" {
+  description = "PostgreSQL version."
   type        = string
-  description = "Resource ID of the audit storage account."
+  default     = "POSTGRES_15"
 }
 
-variable "audit_storage_subscription_id" {
+variable "db_name" {
+  description = "PostgreSQL database name."
   type        = string
-  default     = ""
-  description = "Subscription ID of the audit storage account. Pass var.subscription_id from root."
+
+  validation {
+    condition     = length(var.db_name) > 0
+    error_message = "db_name must not be empty."
+  }
+}
+
+variable "db_user" {
+  description = "PostgreSQL application user name."
+  type        = string
+
+  validation {
+    condition     = length(var.db_user) > 0
+    error_message = "db_user must not be empty."
+  }
+}
+
+variable "db_backup_retention_days" {
+  description = "Number of days to retain automated backups."
+  type        = number
+  default     = 7
+}
+
+variable "db_pitr_days" {
+  description = "Days of PITR transaction log retention."
+  type        = number
+  default     = 7
+}
+
+variable "db_deletion_protection" {
+  description = "Enable deletion protection on the Cloud SQL instance."
+  type        = bool
+  default     = true
+}
+
+variable "labels" {
+  description = "Labels to apply to resources."
+  type        = map(string)
+  default     = {}
 }
