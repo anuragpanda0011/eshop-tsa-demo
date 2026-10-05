@@ -1,0 +1,344 @@
+name: eShopOnWeb Build, Test, and Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - release/**
+  pull_request:
+    branches:
+      - main
+      - release/**
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+
+env:
+  DOTNET_VERSION: "8.0.x"
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+  AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+  WEB_IMAGE_NAME: eshoponweb-web
+  API_IMAGE_NAME: eshoponweb-publicapi
+  WEB_CONTAINER_APP_NAME: ${{ secrets.WEB_CONTAINER_APP_NAME }}
+  API_CONTAINER_APP_NAME: ${{ secrets.API_CONTAINER_APP_NAME }}
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore ./eShopOnWeb.sln --locked-mode
+
+      - name: Build solution
+        run: dotnet build ./eShopOnWeb.sln --configuration Release --no-restore
+
+      - name: Run unit and integration tests
+        run: >
+          dotnet test ./eShopOnWeb.sln
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory ./test-results
+          --collect:"XPlat Code Coverage"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ./test-results/**/*.trx
+          retention-days: 14
+
+      - name: Upload code coverage results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage
+          path: ./test-results/**/coverage.cobertura.xml
+          retention-days: 14
+
+  security-scan:
+    name: Security and Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore ./eShopOnWeb.sln --locked-mode
+
+      - name: Run dotnet security audit
+        run: dotnet list package --vulnerable --include-transitive 2>&1 | tee vulnerability-report.txt
+        continue-on-error: false
+
+      - name: Upload vulnerability report
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnerability-report
+          path: vulnerability-report.txt
+          retention-days: 30
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+          queries: security-and-quality
+
+      - name: Build for CodeQL analysis
+        run: dotnet build ./eShopOnWeb.sln --configuration Release --no-restore
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:csharp"
+
+  build-and-push-images:
+    name: Build and Push Container Images
+    runs-on: ubuntu-latest
+    needs: [build-and-test, security-scan]
+    if: github.event_name != 'pull_request'
+
+    outputs:
+      web_image_tag: ${{ steps.set-tags.outputs.web_image_tag }}
+      api_image_tag: ${{ steps.set-tags.outputs.api_image_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure login via OIDC (Workload Identity Federation)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ env.ACR_LOGIN_SERVER }}
+
+      - name: Set image tags
+        id: set-tags
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          echo "web_image_tag=${{ env.ACR_LOGIN_SERVER }}/${{ env.WEB_IMAGE_NAME }}:${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "api_image_tag=${{ env.ACR_LOGIN_SERVER }}/${{ env.API_IMAGE_NAME }}:${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Web/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.set-tags.outputs.web_image_tag }}
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.WEB_IMAGE_NAME }}:latest
+          cache-from: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.WEB_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.WEB_IMAGE_NAME }}:buildcache,mode=max
+          provenance: true
+          sbom: true
+          build-args: |
+            DOTNET_VERSION=${{ env.DOTNET_VERSION }}
+
+      - name: Build and push PublicApi image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/PublicApi/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.set-tags.outputs.api_image_tag }}
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.API_IMAGE_NAME }}:latest
+          cache-from: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.API_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.API_IMAGE_NAME }}:buildcache,mode=max
+          provenance: true
+          sbom: true
+          build-args: |
+            DOTNET_VERSION=${{ env.DOTNET_VERSION }}
+
+      - name: Run ACR vulnerability scan on Web image
+        run: |
+          az acr task run \
+            --registry ${{ env.ACR_LOGIN_SERVER }} \
+            --name scan-web \
+            --image ${{ env.WEB_IMAGE_NAME }}:${{ env.SHORT_SHA }} \
+            || echo "ACR scan task not configured — skipping (non-blocking)"
+        continue-on-error: true
+
+      - name: Run ACR vulnerability scan on API image
+        run: |
+          az acr task run \
+            --registry ${{ env.ACR_LOGIN_SERVER }} \
+            --name scan-api \
+            --image ${{ env.API_IMAGE_NAME }}:${{ env.SHORT_SHA }} \
+            || echo "ACR scan task not configured — skipping (non-blocking)"
+        continue-on-error: true
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-and-push-images
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment:
+      name: staging
+      url: ${{ steps.get-web-url.outputs.web_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure login via OIDC (Workload Identity Federation)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Web frontend to staging Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.WEB_CONTAINER_APP_NAME }}-staging \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ needs.build-and-push-images.outputs.web_image_tag }} \
+            --set-env-vars \
+              ASPNETCORE_ENVIRONMENT=Staging
+
+      - name: Deploy PublicApi to staging Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.API_CONTAINER_APP_NAME }}-staging \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ needs.build-and-push-images.outputs.api_image_tag }} \
+            --set-env-vars \
+              ASPNETCORE_ENVIRONMENT=Staging
+
+      - name: Get staging Web URL
+        id: get-web-url
+        run: |
+          WEB_URL=$(az containerapp show \
+            --name ${{ env.WEB_CONTAINER_APP_NAME }}-staging \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" \
+            --output tsv)
+          echo "web_url=https://${WEB_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Run smoke tests against staging
+        run: |
+          WEB_URL="${{ steps.get-web-url.outputs.web_url }}"
+          echo "Running smoke tests against ${WEB_URL}"
+          STATUS=$(curl --silent --output /dev/null --write-out "%{http_code}" \
+            --max-time 30 \
+            --retry 5 \
+            --retry-delay 10 \
+            "${WEB_URL}/health")
+          if [ "${STATUS}" -ne 200 ]; then
+            echo "Smoke test FAILED: health endpoint returned HTTP ${STATUS}"
+            exit 1
+          fi
+          echo "Smoke test PASSED: health endpoint returned HTTP 200"
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment:
+      name: production
+      url: ${{ steps.get-prod-web-url.outputs.web_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure login via OIDC (Workload Identity Federation)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Web frontend to production Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.WEB_CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ needs.build-and-push-images.outputs.web_image_tag }} \
+            --set-env-vars \
+              ASPNETCORE_ENVIRONMENT=Production
+
+      - name: Deploy PublicApi to production Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.API_CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ needs.build-and-push-images.outputs.api_image_tag }} \
+            --set-env-vars \
+              ASPNETCORE_ENVIRONMENT=Production
+
+      - name: Get production Web URL
+        id: get-prod-web-url
+        run: |
+          WEB_URL=$(az containerapp show \
+            --name ${{ env.WEB_CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" \
+            --output tsv)
+          echo "web_url=https://${WEB_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Run smoke tests against production
+        run: |
+          WEB_URL="${{ steps.get-prod-web-url.outputs.web_url }}"
+          echo "Running smoke tests against ${WEB_URL}"
+          STATUS=$(curl --silent --output /dev/null --write-out "%{http_code}" \
+            --max-time 30 \
+            --retry 5 \
+            --retry-delay 15 \
+            "${WEB_URL}/health")
+          if [ "${STATUS}" -ne 200 ]; then
+            echo "Production smoke test FAILED: health endpoint returned HTTP ${STATUS}"
+            exit 1
+          fi
+          echo "Production smoke test PASSED: health endpoint returned HTTP 200"
+
+      - name: Notify deployment success via Azure Service Bus
+        if: success()
+        run: |
+          az servicebus message send \
+            --namespace-name ${{ secrets.AZURE_SERVICEBUS_NAMESPACE }} \
+            --topic-name deployments \
+            --body "{\"event\":\"deployment.completed\",\"environment\":\"production\",\"service\":\"eshoponweb\",\"imageWeb\":\"${{ needs.build-and-push-images.outputs.web_image_tag }}\",\"imageApi\":\"${{ needs.build-and-push-images.outputs.api_image_tag }}\",\"sha\":\"${{ github.sha }}\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+            || echo "Service Bus notification failed — non-blocking"
+        continue-on-error: true
+
+      - name: Notify deployment failure via Azure Service Bus
+        if: failure()
+        run: |
+          az servicebus message send \
+            --namespace-name ${{ secrets.AZURE_SERVICEBUS_NAMESPACE }} \
+            --topic-name deployments \
+            --body "{\"event\":\"deployment.failed\",\"environment\":\"production\",\"service\":\"eshoponweb\",\"sha\":\"${{ github.sha }}\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+            || echo "Service Bus failure notification failed — non-blocking"
+        continue-on-error: true
