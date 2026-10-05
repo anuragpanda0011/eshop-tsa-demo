@@ -16,6 +16,39 @@
     },
     "appUserPassword": {
       "value": "$(secretOrRandomPassword ${AZURE_KEY_VAULT_NAME} appUserPassword)"
+    },
+    "logAnalyticsWorkspaceName": {
+      "value": "${AZURE_LOG_ANALYTICS_WORKSPACE_NAME}"
+    },
+    "applicationInsightsName": {
+      "value": "${AZURE_APPLICATION_INSIGHTS_NAME}"
+    },
+    "redisCacheName": {
+      "value": "${AZURE_REDIS_CACHE_NAME}"
+    },
+    "serviceBusNamespaceName": {
+      "value": "${AZURE_SERVICE_BUS_NAMESPACE_NAME}"
+    },
+    "vnetName": {
+      "value": "${AZURE_VNET_NAME}"
+    },
+    "resourceGroupName": {
+      "value": "${AZURE_RESOURCE_GROUP}"
+    },
+    "webServiceName": {
+      "value": "${AZURE_WEB_SERVICE_NAME}"
+    },
+    "catalogDatabaseServerName": {
+      "value": "${AZURE_CATALOG_DB_SERVER_NAME}"
+    },
+    "identityDatabaseServerName": {
+      "value": "${AZURE_IDENTITY_DB_SERVER_NAME}"
+    },
+    "appServicePlanName": {
+      "value": "${AZURE_APP_SERVICE_PLAN_NAME}"
+    },
+    "keyVaultName": {
+      "value": "${AZURE_KEY_VAULT_NAME}"
     }
   }
 }

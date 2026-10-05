@@ -1,6 +1,8 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Encodings.Web;
+using System.Text.Json;
 using Ardalis.GuardClauses;
+using Azure.Messaging.ServiceBus;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -13,7 +15,7 @@ using Microsoft.eShopWeb.Web.ViewModels.Manage;
 namespace Microsoft.eShopWeb.Web.Controllers;
 
 [ApiExplorerSettings(IgnoreApi = true)]
-[Authorize] // Controllers that mainly require Authorization still use Controller/View; other pages use Pages
+[Authorize]
 [Route("[controller]/[action]")]
 public class ManageController : Controller
 {
@@ -22,22 +24,27 @@ public class ManageController : Controller
     private readonly IEmailSender _emailSender;
     private readonly IAppLogger<ManageController> _logger;
     private readonly UrlEncoder _urlEncoder;
+    private readonly ServiceBusClient? _serviceBusClient;
+    private readonly string _eventsTopic;
 
     private const string AuthenticatorUriFormat = "otpauth://totp/{0}:{1}?secret={2}&issuer={0}&digits=6";
     private const string RecoveryCodesKey = nameof(RecoveryCodesKey);
 
     public ManageController(
-      UserManager<ApplicationUser> userManager,
-      SignInManager<ApplicationUser> signInManager,
-      IEmailSender emailSender,
-      IAppLogger<ManageController> logger,
-      UrlEncoder urlEncoder)
+        UserManager<ApplicationUser> userManager,
+        SignInManager<ApplicationUser> signInManager,
+        IEmailSender emailSender,
+        IAppLogger<ManageController> logger,
+        UrlEncoder urlEncoder,
+        ServiceBusClient? serviceBusClient = null)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _emailSender = emailSender;
         _logger = logger;
         _urlEncoder = urlEncoder;
+        _serviceBusClient = serviceBusClient;
+        _eventsTopic = Environment.GetEnvironmentVariable("SERVICEBUS_EVENTS_TOPIC") ?? "user-events";
     }
 
     [TempData]
@@ -49,6 +56,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -76,6 +84,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -99,6 +108,12 @@ public class ManageController : Controller
             }
         }
 
+        await PublishEventAsync("UserProfileUpdated", new
+        {
+            UserId = user.Id,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+
         StatusMessage = "Your profile has been updated";
         return RedirectToAction(nameof(MyAccount));
     }
@@ -115,6 +130,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -139,6 +155,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -164,6 +181,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -176,9 +194,15 @@ public class ManageController : Controller
         }
 
         await _signInManager.SignInAsync(user, isPersistent: false);
-        _logger.LogInformation("User changed their password successfully.");
-        StatusMessage = "Your password has been changed.";
+        _logger.LogInformation("User with ID '{UserId}' changed their password successfully.", user.Id);
 
+        await PublishEventAsync("UserPasswordChanged", new
+        {
+            UserId = user.Id,
+            ChangedAt = DateTimeOffset.UtcNow
+        });
+
+        StatusMessage = "Your password has been changed.";
         return RedirectToAction(nameof(ChangePassword));
     }
 
@@ -188,11 +212,11 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
         var hasPassword = await _userManager.HasPasswordAsync(user);
-
         if (hasPassword)
         {
             return RedirectToAction(nameof(ChangePassword));
@@ -214,6 +238,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -225,8 +250,14 @@ public class ManageController : Controller
         }
 
         await _signInManager.SignInAsync(user, isPersistent: false);
-        StatusMessage = "Your password has been set.";
 
+        await PublishEventAsync("UserPasswordSet", new
+        {
+            UserId = user.Id,
+            SetAt = DateTimeOffset.UtcNow
+        });
+
+        StatusMessage = "Your password has been set.";
         return RedirectToAction(nameof(SetPassword));
     }
 
@@ -236,6 +267,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -253,10 +285,7 @@ public class ManageController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> LinkLogin(string provider)
     {
-        // Clear the existing external cookie to ensure a clean login process
         await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
-
-        // Request a redirect to the external login provider to link a login for the current user
         var redirectUrl = Url.Action(nameof(LinkLoginCallback));
         var properties = _signInManager.ConfigureExternalAuthenticationProperties(provider, redirectUrl, _userManager.GetUserId(User));
         return new ChallengeResult(provider, properties);
@@ -268,6 +297,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -283,8 +313,14 @@ public class ManageController : Controller
             throw new ApplicationException($"Unexpected error occurred adding external login for user with ID '{user.Id}'.");
         }
 
-        // Clear the existing external cookie to ensure a clean login process
         await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
+
+        await PublishEventAsync("UserExternalLoginAdded", new
+        {
+            UserId = user.Id,
+            Provider = info.LoginProvider,
+            AddedAt = DateTimeOffset.UtcNow
+        });
 
         StatusMessage = "The external login was added.";
         return RedirectToAction(nameof(ExternalLogins));
@@ -297,8 +333,10 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
+
         if (!ModelState.IsValid)
         {
             return View(model);
@@ -311,6 +349,14 @@ public class ManageController : Controller
         }
 
         await _signInManager.SignInAsync(user, isPersistent: false);
+
+        await PublishEventAsync("UserExternalLoginRemoved", new
+        {
+            UserId = user.Id,
+            Provider = model.LoginProvider,
+            RemovedAt = DateTimeOffset.UtcNow
+        });
+
         StatusMessage = "The external login was removed.";
         return RedirectToAction(nameof(ExternalLogins));
     }
@@ -321,6 +367,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -340,6 +387,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -358,6 +406,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -367,7 +416,14 @@ public class ManageController : Controller
             throw new ApplicationException($"Unexpected error occured disabling 2FA for user with ID '{user.Id}'.");
         }
 
-        _logger.LogInformation("User with ID {UserId} has disabled 2fa.", user.Id);
+        _logger.LogInformation("User with ID '{UserId}' has disabled 2FA.", user.Id);
+
+        await PublishEventAsync("User2faDisabled", new
+        {
+            UserId = user.Id,
+            DisabledAt = DateTimeOffset.UtcNow
+        });
+
         return RedirectToAction(nameof(TwoFactorAuthentication));
     }
 
@@ -377,6 +433,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -399,7 +456,6 @@ public class ManageController : Controller
         return View(model);
     }
 
-
     [HttpPost]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> EnableAuthenticator(EnableAuthenticatorViewModel model)
@@ -407,6 +463,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -416,7 +473,6 @@ public class ManageController : Controller
             return View(model);
         }
 
-        // Strip spaces and hypens
         string verificationCode = model.Code?.Replace(" ", string.Empty).Replace("-", string.Empty) ?? "";
 
         var is2faTokenValid = await _userManager.VerifyTwoFactorTokenAsync(
@@ -430,9 +486,16 @@ public class ManageController : Controller
         }
 
         await _userManager.SetTwoFactorEnabledAsync(user, true);
-        _logger.LogInformation("User with ID {UserId} has enabled 2FA with an authenticator app.", user.Id);
+        _logger.LogInformation("User with ID '{UserId}' has enabled 2FA with an authenticator app.", user.Id);
+
         var recoveryCodes = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10) ?? new List<string>();
         TempData[RecoveryCodesKey] = recoveryCodes.ToArray();
+
+        await PublishEventAsync("User2faEnabled", new
+        {
+            UserId = user.Id,
+            EnabledAt = DateTimeOffset.UtcNow
+        });
 
         return RedirectToAction(nameof(ShowRecoveryCodes));
     }
@@ -450,12 +513,19 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
         await _userManager.SetTwoFactorEnabledAsync(user, false);
         await _userManager.ResetAuthenticatorKeyAsync(user);
-        _logger.LogInformation("User with id '{UserId}' has reset their authentication app key.", user.Id);
+        _logger.LogInformation("User with ID '{UserId}' has reset their authentication app key.", user.Id);
+
+        await PublishEventAsync("UserAuthenticatorReset", new
+        {
+            UserId = user.Id,
+            ResetAt = DateTimeOffset.UtcNow
+        });
 
         return RedirectToAction(nameof(EnableAuthenticator));
     }
@@ -467,6 +537,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -476,10 +547,15 @@ public class ManageController : Controller
         }
 
         var recoveryCodes = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10) ?? new List<string>();
-        _logger.LogInformation("User with ID {UserId} has generated new 2FA recovery codes.", user.Id);
+        _logger.LogInformation("User with ID '{UserId}' has generated new 2FA recovery codes.", user.Id);
+
+        await PublishEventAsync("UserRecoveryCodesGenerated", new
+        {
+            UserId = user.Id,
+            GeneratedAt = DateTimeOffset.UtcNow
+        });
 
         var model = new ShowRecoveryCodesViewModel { RecoveryCodes = recoveryCodes.ToArray() };
-
         return View(nameof(ShowRecoveryCodes), model);
     }
 
@@ -489,6 +565,7 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("Unable to load user with ID '{UserId}'.", _userManager.GetUserId(User));
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -547,4 +624,28 @@ public class ManageController : Controller
         model.AuthenticatorUri = GenerateQrCodeUri(user.Email!, unformattedKey!);
     }
 
+    private async Task PublishEventAsync(string eventType, object payload)
+    {
+        if (_serviceBusClient == null) return;
+        try
+        {
+            var sender = _serviceBusClient.CreateSender(_eventsTopic);
+            var body = JsonSerializer.Serialize(new
+            {
+                EventType = eventType,
+                OccurredAt = DateTimeOffset.UtcNow,
+                Payload = payload
+            });
+            var message = new ServiceBusMessage(body)
+            {
+                ContentType = "application/json",
+                Subject = eventType
+            };
+            await sender.SendMessageAsync(message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Failed to publish event '{EventType}' to Service Bus: {Error}", eventType, ex.Message);
+        }
+    }
 }

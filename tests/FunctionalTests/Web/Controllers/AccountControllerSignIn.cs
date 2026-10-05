@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
@@ -8,6 +8,14 @@ namespace Microsoft.eShopWeb.FunctionalTests.Web.Controllers;
 [Collection("Sequential")]
 public class AccountControllerSignIn : IClassFixture<TestApplication>
 {
+    // Default password is intentionally NOT stored as a literal here.
+    // It is read from the TEST_DEFAULT_PASSWORD environment variable so that
+    // secrets are never committed to source control.
+    private static readonly string DefaultPassword =
+        Environment.GetEnvironmentVariable("TEST_DEFAULT_PASSWORD")
+        ?? throw new InvalidOperationException(
+            "TEST_DEFAULT_PASSWORD environment variable is required for functional tests.");
+
     public AccountControllerSignIn(TestApplication factory)
     {
         Client = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -31,8 +39,6 @@ public class AccountControllerSignIn : IClassFixture<TestApplication>
     [Fact]
     public void RegexMatchesValidRequestVerificationToken()
     {
-        // TODO: Move to a unit test
-        // TODO: Move regex to a constant in test project
         var input = @"<input name=""__RequestVerificationToken"" type=""hidden"" value=""CfDJ8Obhlq65OzlDkoBvsSX0tgxFUkIZ_qDDSt49D_StnYwphIyXO4zxfjopCWsygfOkngsL6P0tPmS2HTB1oYW-p_JzE0_MCFb7tF9Ol_qoOg_IC_yTjBNChF0qRgoZPmKYOIJigg7e2rsBsmMZDTdbnGo"" /><input name=""RememberMe"" type=""hidden"" value=""false"" /></form>";
         string regexpression = @"name=""__RequestVerificationToken"" type=""hidden"" value=""([-A-Za-z0-9+=/\\_]+?)""";
         var regex = new Regex(regexpression);
@@ -62,44 +68,45 @@ public class AccountControllerSignIn : IClassFixture<TestApplication>
 
         var keyValues = new List<KeyValuePair<string, string>>
         {
-            new KeyValuePair<string, string>("Email", "demouser@microsoft.com"),
-            new KeyValuePair<string, string>("Password", "Pass@word1"),
-            new KeyValuePair<string, string>(WebPageHelpers.TokenTag, WebPageHelpers.GetRequestVerificationToken(stringResponse1))
+            new("Email", "demouser@microsoft.com"),
+            new("Password", DefaultPassword),
+            new(WebPageHelpers.TokenTag, WebPageHelpers.GetRequestVerificationToken(stringResponse1))
         };
         var formContent = new FormUrlEncodedContent(keyValues);
 
         var postResponse = await Client.PostAsync("/identity/account/login", formContent);
         Assert.Equal(HttpStatusCode.Redirect, postResponse.StatusCode);
-        Assert.Equal(new System.Uri("/", UriKind.Relative), postResponse.Headers.Location);
+        Assert.Equal(new Uri("/", UriKind.Relative), postResponse.Headers.Location);
     }
 
     [Fact]
     public async Task UpdatePhoneNumberProfile()
     {
-        //Login
+        // Login
         var getResponse = await Client.GetAsync("/identity/account/login");
         getResponse.EnsureSuccessStatusCode();
         var stringResponse1 = await getResponse.Content.ReadAsStringAsync();
+
         var keyValues = new List<KeyValuePair<string, string>>
         {
-            new KeyValuePair<string, string>("Email", "demouser@microsoft.com"),
-            new KeyValuePair<string, string>("Password", "Pass@word1"),
-            new KeyValuePair<string, string>(WebPageHelpers.TokenTag, WebPageHelpers.GetRequestVerificationToken(stringResponse1))
+            new("Email", "demouser@microsoft.com"),
+            new("Password", DefaultPassword),
+            new(WebPageHelpers.TokenTag, WebPageHelpers.GetRequestVerificationToken(stringResponse1))
         };
         var formContent = new FormUrlEncodedContent(keyValues);
         await Client.PostAsync("/identity/account/login", formContent);
 
-        //Profile page
+        // Profile page
         var profileResponse = await Client.GetAsync("/manage/my-account");
         profileResponse.EnsureSuccessStatusCode();
         var stringProfileResponse = await profileResponse.Content.ReadAsStringAsync();
 
-        //Update phone number
+        // Update phone number
         var updateProfileValues = new List<KeyValuePair<string, string>>
         {
-            new KeyValuePair<string, string>("Email", "demouser@microsoft.com"),
-            new KeyValuePair<string, string>("PhoneNumber", "03656565"),
-            new KeyValuePair<string, string>(WebPageHelpers.TokenTag, WebPageHelpers.GetRequestVerificationToken(stringProfileResponse))
+            new("Email", "demouser@microsoft.com"),
+            new("PhoneNumber", "03656565"),
+            new(WebPageHelpers.TokenTag, WebPageHelpers.GetRequestVerificationToken(stringProfileResponse))
         };
         var updateProfileContent = new FormUrlEncodedContent(updateProfileValues);
         var postProfileResponse = await Client.PostAsync("/manage/my-account", updateProfileContent);
@@ -108,6 +115,5 @@ public class AccountControllerSignIn : IClassFixture<TestApplication>
         var profileResponse2 = await Client.GetAsync("/manage/my-account");
         var stringProfileResponse2 = await profileResponse2.Content.ReadAsStringAsync();
         Assert.Contains("03656565", stringProfileResponse2);
-
     }
 }

@@ -1,4 +1,5 @@
-﻿using System.Net.Mime;
+using System.Net.Mime;
+using System.Text.Json;
 using Ardalis.ListStartupServices;
 using Azure.Identity;
 using BlazorAdmin;
@@ -18,30 +19,103 @@ using Microsoft.eShopWeb.Web;
 using Microsoft.eShopWeb.Web.Configuration;
 using Microsoft.eShopWeb.Web.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Logging.AddConsole();
 
-if (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Docker"){
-    // Configure SQL Server (local)
+// ---------------------------------------------------------------------------
+// Structured JSON logging to stdout
+// ---------------------------------------------------------------------------
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole(opts =>
+{
+    opts.IncludeScopes = true;
+    opts.TimestampFormat = "o";
+});
+
+// ---------------------------------------------------------------------------
+// Configuration: Key Vault in non-dev environments
+// ---------------------------------------------------------------------------
+var isDevelopment = builder.Environment.IsDevelopment()
+                    || builder.Environment.EnvironmentName == "Docker";
+
+if (!isDevelopment)
+{
+    var keyVaultEndpoint = builder.Configuration["AZURE_KEY_VAULT_ENDPOINT"]
+        ?? throw new InvalidOperationException(
+            "AZURE_KEY_VAULT_ENDPOINT environment variable is required in non-development environments.");
+
+    var credential = new ChainedTokenCredential(
+        new AzureDeveloperCliCredential(),
+        new DefaultAzureCredential());
+
+    builder.Configuration.AddAzureKeyVault(new Uri(keyVaultEndpoint), credential);
+}
+
+// ---------------------------------------------------------------------------
+// Database
+// ---------------------------------------------------------------------------
+if (isDevelopment)
+{
     Microsoft.eShopWeb.Infrastructure.Dependencies.ConfigureServices(builder.Configuration, builder.Services);
 }
-else{
-    // Configure SQL Server (prod)
-    var credential = new ChainedTokenCredential(new AzureDeveloperCliCredential(), new DefaultAzureCredential());
-    builder.Configuration.AddAzureKeyVault(new Uri(builder.Configuration["AZURE_KEY_VAULT_ENDPOINT"] ?? ""), credential);
+else
+{
     builder.Services.AddDbContext<CatalogContext>(c =>
     {
-        var connectionString = builder.Configuration[builder.Configuration["AZURE_SQL_CATALOG_CONNECTION_STRING_KEY"] ?? ""];
-        c.UseSqlServer(connectionString, sqlOptions => sqlOptions.EnableRetryOnFailure());
+        var connKey = builder.Configuration["AZURE_SQL_CATALOG_CONNECTION_STRING_KEY"]
+            ?? throw new InvalidOperationException("AZURE_SQL_CATALOG_CONNECTION_STRING_KEY is required.");
+        var connectionString = builder.Configuration[connKey]
+            ?? throw new InvalidOperationException($"Connection string key '{connKey}' not found in configuration.");
+        c.UseSqlServer(connectionString, sqlOptions =>
+        {
+            sqlOptions.EnableRetryOnFailure(maxRetryCount: 5);
+        });
     });
+
     builder.Services.AddDbContext<AppIdentityDbContext>(options =>
     {
-        var connectionString = builder.Configuration[builder.Configuration["AZURE_SQL_IDENTITY_CONNECTION_STRING_KEY"] ?? ""];
-        options.UseSqlServer(connectionString, sqlOptions => sqlOptions.EnableRetryOnFailure());
+        var connKey = builder.Configuration["AZURE_SQL_IDENTITY_CONNECTION_STRING_KEY"]
+            ?? throw new InvalidOperationException("AZURE_SQL_IDENTITY_CONNECTION_STRING_KEY is required.");
+        var connectionString = builder.Configuration[connKey]
+            ?? throw new InvalidOperationException($"Connection string key '{connKey}' not found in configuration.");
+        options.UseSqlServer(connectionString, sqlOptions =>
+        {
+            sqlOptions.EnableRetryOnFailure(maxRetryCount: 5);
+        });
     });
 }
 
+// ---------------------------------------------------------------------------
+// Redis – distributed cache and session basket
+// ---------------------------------------------------------------------------
+var redisConnectionString = builder.Configuration["REDIS_CONNECTION_STRING"];
+if (!string.IsNullOrWhiteSpace(redisConnectionString))
+{
+    // In production enforce rediss:// (TLS)
+    if (!isDevelopment && !redisConnectionString.StartsWith("rediss://", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "REDIS_CONNECTION_STRING must use the rediss:// scheme (TLS) in non-development environments.");
+    }
+
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = redisConnectionString;
+        options.InstanceName = "eshop:web:";
+    });
+
+    builder.Services.AddSingleton<IConnectionMultiplexer>(
+        ConnectionMultiplexer.Connect(redisConnectionString));
+}
+else
+{
+    builder.Services.AddDistributedMemoryCache();
+}
+
+// ---------------------------------------------------------------------------
+// Cookie / Auth
+// ---------------------------------------------------------------------------
 builder.Services.AddCookieSettings();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -53,58 +127,62 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     });
 
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
-           .AddDefaultUI()
-           .AddEntityFrameworkStores<AppIdentityDbContext>()
-                           .AddDefaultTokenProviders();
+    .AddDefaultUI()
+    .AddEntityFrameworkStores<AppIdentityDbContext>()
+    .AddDefaultTokenProviders();
 
+// ---------------------------------------------------------------------------
+// Application services
+// ---------------------------------------------------------------------------
 builder.Services.AddScoped<ITokenClaimsService, IdentityTokenClaimService>();
 builder.Configuration.AddEnvironmentVariables();
 builder.Services.AddCoreServices(builder.Configuration);
 builder.Services.AddWebServices(builder.Configuration);
 
-// Add memory cache services
 builder.Services.AddMemoryCache();
+
 builder.Services.AddRouting(options =>
 {
-    // Replace the type and the name used to refer to it with your own
-    // IOutboundParameterTransformer implementation
     options.ConstraintMap["slugify"] = typeof(SlugifyParameterTransformer);
 });
 
 builder.Services.AddMvc(options =>
 {
-    options.Conventions.Add(new RouteTokenTransformerConvention(
-             new SlugifyParameterTransformer()));
-
+    options.Conventions.Add(new RouteTokenTransformerConvention(new SlugifyParameterTransformer()));
 });
+
 builder.Services.AddControllersWithViews();
+
 builder.Services.AddRazorPages(options =>
 {
     options.Conventions.AuthorizePage("/Basket/Checkout");
 });
+
 builder.Services.AddHttpContextAccessor();
+
 builder.Services
     .AddHealthChecks()
     .AddCheck<ApiHealthCheck>("api_health_check", tags: new[] { "apiHealthCheck" })
     .AddCheck<HomePageHealthCheck>("home_page_health_check", tags: new[] { "homePageHealthCheck" });
+
 builder.Services.Configure<ServiceConfig>(config =>
 {
     config.Services = new List<ServiceDescriptor>(builder.Services);
     config.Path = "/allservices";
 });
 
-// blazor configuration
+// ---------------------------------------------------------------------------
+// Blazor configuration
+// ---------------------------------------------------------------------------
 var configSection = builder.Configuration.GetRequiredSection(BaseUrlConfiguration.CONFIG_NAME);
 builder.Services.Configure<BaseUrlConfiguration>(configSection);
 var baseUrlConfig = configSection.Get<BaseUrlConfiguration>();
 
-// Blazor Admin Required Services for Prerendering
-builder.Services.AddScoped<HttpClient>(s => new HttpClient
+builder.Services.AddScoped<HttpClient>(_ => new HttpClient
 {
     BaseAddress = new Uri(baseUrlConfig!.WebBase)
 });
 
-// add blazor services
 builder.Services.AddBlazoredLocalStorage();
 builder.Services.AddServerSideBlazor();
 builder.Services.AddScoped<ToastService>();
@@ -113,11 +191,27 @@ builder.Services.AddBlazorServices();
 
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
+// ---------------------------------------------------------------------------
+// Build
+// ---------------------------------------------------------------------------
 var app = builder.Build();
 
-app.Logger.LogInformation("App created...");
+var logger = app.Logger;
+logger.LogInformation("{\"event\":\"AppCreated\",\"environment\":\"{Environment\"}}", app.Environment.EnvironmentName);
 
-app.Logger.LogInformation("Seeding Database...");
+// ---------------------------------------------------------------------------
+// SIGTERM: graceful shutdown
+// ---------------------------------------------------------------------------
+var appLifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+appLifetime.ApplicationStopping.Register(() =>
+{
+    logger.LogInformation("{\"event\":\"ApplicationStopping\",\"message\":\"SIGTERM received, draining requests.\"}");
+});
+
+// ---------------------------------------------------------------------------
+// Database seeding
+// ---------------------------------------------------------------------------
+logger.LogInformation("{\"event\":\"DatabaseSeeding\",\"message\":\"Seeding database...\"}");
 
 using (var scope = app.Services.CreateScope())
 {
@@ -125,7 +219,7 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var catalogContext = scopedProvider.GetRequiredService<CatalogContext>();
-        await CatalogContextSeed.SeedAsync(catalogContext, app.Logger);
+        await CatalogContextSeed.SeedAsync(catalogContext, logger);
 
         var userManager = scopedProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var roleManager = scopedProvider.GetRequiredService<RoleManager<IdentityRole>>();
@@ -134,11 +228,14 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "An error occurred seeding the DB.");
+        logger.LogError(ex, "{\"event\":\"DatabaseSeedError\",\"message\":\"An error occurred seeding the DB.\"}");
     }
 }
 
-var catalogBaseUrl = builder.Configuration.GetValue(typeof(string), "CatalogBaseUrl") as string;
+// ---------------------------------------------------------------------------
+// Middleware
+// ---------------------------------------------------------------------------
+var catalogBaseUrl = builder.Configuration.GetValue<string>("CatalogBaseUrl");
 if (!string.IsNullOrEmpty(catalogBaseUrl))
 {
     app.Use((context, next) =>
@@ -153,7 +250,7 @@ app.UseHealthChecks("/health",
     {
         ResponseWriter = async (context, report) =>
         {
-            var result = new
+            var result = JsonSerializer.Serialize(new
             {
                 status = report.Status.ToString(),
                 errors = report.Entries.Select(e => new
@@ -161,14 +258,15 @@ app.UseHealthChecks("/health",
                     key = e.Key,
                     value = Enum.GetName(typeof(HealthStatus), e.Value.Status)
                 })
-            }.ToJson();
+            });
             context.Response.ContentType = MediaTypeNames.Application.Json;
             await context.Response.WriteAsync(result);
         }
     });
-if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Docker")
+
+if (isDevelopment)
 {
-    app.Logger.LogInformation("Adding Development middleware...");
+    logger.LogInformation("{\"event\":\"MiddlewareSetup\",\"message\":\"Adding Development middleware.\"}");
     app.UseDeveloperExceptionPage();
     app.UseShowAllServicesMiddleware();
     app.UseMigrationsEndPoint();
@@ -176,7 +274,7 @@ if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Docke
 }
 else
 {
-    app.Logger.LogInformation("Adding non-Development middleware...");
+    logger.LogInformation("{\"event\":\"MiddlewareSetup\",\"message\":\"Adding Production middleware.\"}");
     app.UseExceptionHandler("/Error");
     app.UseHsts();
 }
@@ -190,13 +288,13 @@ app.UseCookiePolicy();
 app.UseAuthentication();
 app.UseAuthorization();
 
-
 app.MapControllerRoute("default", "{controller:slugify=Home}/{action:slugify=Index}/{id?}");
 app.MapRazorPages();
-app.MapHealthChecks("home_page_health_check", new HealthCheckOptions { Predicate = check => check.Tags.Contains("homePageHealthCheck") });
-app.MapHealthChecks("api_health_check", new HealthCheckOptions { Predicate = check => check.Tags.Contains("apiHealthCheck") });
-//endpoints.MapBlazorHub("/admin");
+app.MapHealthChecks("home_page_health_check",
+    new HealthCheckOptions { Predicate = check => check.Tags.Contains("homePageHealthCheck") });
+app.MapHealthChecks("api_health_check",
+    new HealthCheckOptions { Predicate = check => check.Tags.Contains("apiHealthCheck") });
 app.MapFallbackToFile("index.html");
 
-app.Logger.LogInformation("LAUNCHING");
+logger.LogInformation("{\"event\":\"Launching\",\"message\":\"LAUNCHING\"}");
 app.Run();

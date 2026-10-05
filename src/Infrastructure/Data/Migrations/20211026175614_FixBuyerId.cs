@@ -1,4 +1,8 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+// EF Core migration — targets Azure SQL Database (General Purpose tier).
+// Widens BuyerId columns on Orders and Baskets to nvarchar(256) to accommodate
+// Azure Entra ID (AAD) UPN-format user identifiers used by Managed Identity auth.
+// Do NOT edit manually; regenerate via `dotnet ef migrations add`.
+using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Microsoft.eShopWeb.Infrastructure.Data.Migrations;
 

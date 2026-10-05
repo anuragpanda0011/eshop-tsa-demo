@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.eShopWeb.ApplicationCore.Entities.BasketAggregate;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
@@ -31,17 +32,16 @@ public class TransferBasket
         public T Next() { return values.Dequeue()(); }
     }
 
-        [Fact]
+    [Fact]
     public async Task InvokesBasketRepositoryFirstOrDefaultAsyncOnceIfAnonymousBasketNotExists()
     {
-            var anonymousBasket = null as Basket;
-            var userBasket = new Basket(_existentUserBasketBuyerId);
-            
+        var anonymousBasket = null as Basket;
+        var userBasket = new Basket(_existentUserBasketBuyerId);
+
         var results = new Results<Basket?>(anonymousBasket)
                         .Then(userBasket);
 
-
-        _mockBasketRepo.FirstOrDefaultAsync(Arg.Any<BasketWithItemsSpecification>(), default).Returns(x => results.Next());          
+        _mockBasketRepo.FirstOrDefaultAsync(Arg.Any<BasketWithItemsSpecification>(), default).Returns(x => results.Next());
         var basketService = new BasketService(_mockBasketRepo, _mockLogger);
         await basketService.TransferBasketAsync(_nonexistentAnonymousBasketBuyerId, _existentUserBasketBuyerId);
         await _mockBasketRepo.Received().FirstOrDefaultAsync(Arg.Any<BasketWithItemsSpecification>(), default);

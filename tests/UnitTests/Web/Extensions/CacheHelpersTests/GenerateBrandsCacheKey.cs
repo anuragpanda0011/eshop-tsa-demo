@@ -1,4 +1,4 @@
-﻿using Microsoft.eShopWeb.Web.Extensions;
+using Microsoft.eShopWeb.Web.Extensions;
 using Xunit;
 
 namespace Microsoft.eShopWeb.UnitTests.Web.Extensions.CacheHelpersTests;

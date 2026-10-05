@@ -1,4 +1,7 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Threading.Tasks;
 using Ardalis.GuardClauses;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
@@ -7,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 using Microsoft.eShopWeb.Infrastructure.Identity;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.eShopWeb.Web.Areas.Identity.Pages.Account;
 
@@ -17,7 +21,10 @@ public class LoginModel : PageModel
     private readonly ILogger<LoginModel> _logger;
     private readonly IBasketService _basketService;
 
-    public LoginModel(SignInManager<ApplicationUser> signInManager, ILogger<LoginModel> logger, IBasketService basketService)
+    public LoginModel(
+        SignInManager<ApplicationUser> signInManager,
+        ILogger<LoginModel> logger,
+        IBasketService basketService)
     {
         _signInManager = signInManager;
         _logger = logger;
@@ -71,35 +78,44 @@ public class LoginModel : PageModel
 
         if (ModelState.IsValid)
         {
-            // This doesn't count login failures towards account lockout
-            // To enable password failures to trigger account lockout, set lockoutOnFailure: true
-            //var result = await _signInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
-            var result = await _signInManager.PasswordSignInAsync(Input!.Email!, Input!.Password!, 
-                false, true);
+            // lockoutOnFailure: true — accounts lock after repeated failures
+            var result = await _signInManager.PasswordSignInAsync(
+                Input!.Email!, Input!.Password!, false, lockoutOnFailure: true);
 
             if (result.Succeeded)
             {
-                _logger.LogInformation("User logged in.");
-                await TransferAnonymousBasketToUserAsync(Input?.Email);
+                _logger.LogInformation(
+                    "User logged in. Email={Email} TraceId={TraceId}",
+                    Input.Email,
+                    HttpContext.TraceIdentifier);
+
+                await TransferAnonymousBasketToUserAsync(Input.Email);
                 return LocalRedirect(returnUrl);
             }
             if (result.RequiresTwoFactor)
             {
-                return RedirectToPage("./LoginWith2fa", new { ReturnUrl = returnUrl, RememberMe = Input?.RememberMe });
+                return RedirectToPage("./LoginWith2fa",
+                    new { ReturnUrl = returnUrl, RememberMe = Input.RememberMe });
             }
             if (result.IsLockedOut)
             {
-                _logger.LogWarning("User account locked out.");
+                _logger.LogWarning(
+                    "User account locked out. Email={Email} TraceId={TraceId}",
+                    Input.Email,
+                    HttpContext.TraceIdentifier);
                 return RedirectToPage("./Lockout");
             }
             else
             {
+                _logger.LogWarning(
+                    "Invalid login attempt. Email={Email} TraceId={TraceId}",
+                    Input.Email,
+                    HttpContext.TraceIdentifier);
                 ModelState.AddModelError(string.Empty, "Invalid login attempt.");
                 return Page();
             }
         }
 
-        // If we got this far, something failed, redisplay form
         return Page();
     }
 

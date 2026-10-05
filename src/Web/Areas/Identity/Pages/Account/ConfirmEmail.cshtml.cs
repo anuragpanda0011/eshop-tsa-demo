@@ -1,6 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
+using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -36,7 +34,8 @@ public class ConfirmEmailModel : PageModel
         var result = await _userManager.ConfirmEmailAsync(user, code);
         if (!result.Succeeded)
         {
-            throw new InvalidOperationException($"Error confirming email for user with ID '{userId}':");
+            throw new InvalidOperationException(
+                $"Error confirming email for user with ID '{userId}'.");
         }
 
         return Page();

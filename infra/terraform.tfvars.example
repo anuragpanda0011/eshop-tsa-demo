@@ -1,0 +1,64 @@
+# Copy this file to terraform.tfvars and fill in the values.
+# NEVER commit terraform.tfvars with real secrets to source control.
+
+subscription_id    = "00000000-0000-0000-0000-000000000000"
+location           = "eastus2"
+location_secondary = "westus2"
+environment        = "prod"
+project            = "eshoponweb"
+
+# Networking
+vnet_address_space = ["10.10.0.0/16"]
+subnet_apim_cidr   = "10.10.9.0/27"
+
+# DNS
+custom_domain           = "shop.contoso.com"
+dns_zone_name           = "contoso.com"
+dns_zone_resource_group = "rg-dns"
+
+# AAD SQL Administrator — provide object ID of a dedicated AAD group.
+# Do NOT use a managed identity principal ID here.
+aad_sql_admin_object_id = "00000000-0000-0000-0000-000000000000"
+
+# APIM
+apim_publisher_email = "admin@contoso.com"
+apim_publisher_name  = "eShopOnWeb Team"
+apim_sku             = "Standard_1"
+apim_tenant_id       = "00000000-0000-0000-0000-000000000000"
+apim_audience        = "api://00000000-0000-0000-0000-000000000000"
+
+# Static Web App AAD authentication
+# Create an Azure AD App Registration and provide the client ID and a generated secret.
+# Set the redirect URI to: https://<swa-default-hostname>/.auth/login/aad/callback
+swa_aad_client_id     = "00000000-0000-0000-0000-000000000000"
+swa_aad_client_secret = "REPLACE_WITH_AAD_APP_CLIENT_SECRET"  # Mark as sensitive — use env var TF_VAR_swa_aad_client_secret
+
+# Container images — must use pinned digest or specific tag, never :latest
+web_image = "mcr.microsoft.com/dotnet/aspnet:8.0.12-jammy-chiseled"
+api_image = "mcr.microsoft.com/dotnet/aspnet:8.0.12-jammy-chiseled"
+
+# GitHub
+github_org      = "contoso"
+github_repo     = "eShopOnWeb"
+github_branch   = "main"
+github_repo_url = "https://github.com/contoso/eShopOnWeb"
+
+# Monitoring
+log_retention_days               = 90
+alert_email                      = "ops@contoso.com"
+app_insights_sampling_percentage = 20
+# Obtain after first apply: terraform output -raw log_analytics_workspace_guid
+log_analytics_workspace_guid = "00000000-0000-0000-0000-000000000000"
+
+# Scaling
+web_min_replicas = 2
+web_max_replicas = 20
+api_min_replicas = 2
+api_max_replicas = 15
+
+tags = {
+  project     = "eshoponweb"
+  environment = "prod"
+  managed_by  = "terraform"
+  cost_center = "12345"
+}

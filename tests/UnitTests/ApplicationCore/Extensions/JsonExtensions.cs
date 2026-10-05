@@ -1,4 +1,4 @@
-﻿using Xunit;
+using Xunit;
 
 namespace Microsoft.eShopWeb.UnitTests.ApplicationCore.Extensions;
 
@@ -13,10 +13,10 @@ public class JsonExtensions
             Name = "Test name",
             Children = new[]
             {
-                    new TestChild(),
-                    new TestChild(),
-                    new TestChild()
-                }
+                new TestChild(),
+                new TestChild(),
+                new TestChild()
+            }
         };
 
         var json = testParent.ToJson();
@@ -31,5 +31,4 @@ public class JsonExtensions
     ]
     public void CorrectlyDeserializesJson(string json, int expectedId, string expectedName) =>
         Assert.Equal(new TestParent { Id = expectedId, Name = expectedName }, json.FromJson<TestParent>());
-
 }

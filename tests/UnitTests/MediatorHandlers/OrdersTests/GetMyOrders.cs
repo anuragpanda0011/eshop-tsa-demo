@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Ardalis.Specification;
@@ -19,12 +19,12 @@ public class GetMyOrders
         var item = new OrderItem(new CatalogItemOrdered(1, "ProductName", "URI"), 10.00m, 10);
         var address = new Address("", "", "", "", "");
         Order order = new Order("buyerId", address, new List<OrderItem> { item });
-              
+
         _mockOrderRepository.ListAsync(Arg.Any<ISpecification<Order>>(), default).Returns(new List<Order> { order });
     }
 
     [Fact]
-    public async Task NotReturnNullIfOrdersArePresIent()
+    public async Task NotReturnNullIfOrdersArePresent()
     {
         var request = new eShopWeb.Web.Features.MyOrders.GetMyOrders("SomeUserName");
 

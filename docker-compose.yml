@@ -1,25 +1,204 @@
-version: '3.4'
+###############################################################################
+# eShopOnWeb — LOCAL DEVELOPMENT only
+# Production deployments use Azure Container Apps (see infra/ Bicep).
+###############################################################################
+version: "3.9"
 
 services:
-  eshopwebmvc:
-    image: ${DOCKER_REGISTRY-}eshopwebmvc
-    build:
-      context: .
-      dockerfile: src/Web/Dockerfile
-    depends_on:
-      - "sqlserver"
-  eshoppublicapi:
-    image: ${DOCKER_REGISTRY-}eshoppublicapi
-    build:
-      context: .
-      dockerfile: src/PublicApi/Dockerfile
-    depends_on:
-      - "sqlserver"
-  sqlserver:
-    image: mcr.microsoft.com/azure-sql-edge
-    ports:
-      - "1433:1433"
-    environment:
-      - SA_PASSWORD=@someThingComplicated1234
-      - ACCEPT_EULA=Y
 
+  # ── Azure SQL Edge (local SQL Server substitute) ──────────────────────────
+  sqlserver:
+    image: mcr.microsoft.com/azure-sql-edge:1.0.7
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${SA_PASSWORD}"
+      MSSQL_PID: Developer
+    ports:
+      - "127.0.0.1:1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+      - ./scripts/sql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: >
+        /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P "${SA_PASSWORD}"
+        -Q "SELECT 1" -b -o /dev/null
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+    restart: unless-stopped
+
+  # ── Azure Cache for Redis (local) ─────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── Azurite (Azure Blob / Queue / Table emulator) ─────────────────────────
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.29.0
+    command: >
+      azurite
+        --blobHost 0.0.0.0 --blobPort 10000
+        --queueHost 0.0.0.0 --queuePort 10001
+        --tableHost 0.0.0.0 --tablePort 10002
+        --location /data
+        --debug /data/azurite-debug.log
+        --loose
+    ports:
+      - "127.0.0.1:10000:10000"
+      - "127.0.0.1:10001:10001"
+      - "127.0.0.1:10002:10002"
+    volumes:
+      - azurite-data:/data
+    healthcheck:
+      test: >
+        nc -z localhost 10000 &&
+        nc -z localhost 10001 &&
+        nc -z localhost 10002
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── Azure Service Bus emulator (Service Bus / Event Grid substitute) ───────
+  servicebus-emulator:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:0.1.0
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      SQL_SERVER: sqlserver
+      MSSQL_SA_PASSWORD: "${SA_PASSWORD}"
+    ports:
+      - "127.0.0.1:5672:5672"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 5672 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── Init container — creates local emulator resources ─────────────────────
+  init:
+    image: mcr.microsoft.com/azure-cli:2.59.0
+    env_file: .env.local
+    environment:
+      AZURE_STORAGE_CONNECTION_STRING: >-
+        DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;
+        AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KQk1JX8zd5Yw==;
+        BlobEndpoint=http://azurite:10000/devstoreaccount1;
+        QueueEndpoint=http://azurite:10001/devstoreaccount1;
+        TableEndpoint=http://azurite:10002/devstoreaccount1;
+    volumes:
+      - ./scripts/azurite-init.sh:/init.sh:ro
+    command: ["sh", "/init.sh"]
+    depends_on:
+      azurite:
+        condition: service_healthy
+      sqlserver:
+        condition: service_healthy
+    restart: "no"
+
+  # ── Web (MVC storefront) ──────────────────────────────────────────────────
+  eshopwebmvc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web-runtime
+    env_file: .env.local
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      DEBUG: "true"
+      ConnectionStrings__CatalogConnection: >-
+        Server=sqlserver,1433;Database=Microsoft.eShopOnWeb.CatalogDb;
+        User Id=sa;Password=${SA_PASSWORD};
+        TrustServerCertificate=True;MultipleActiveResultSets=True
+      ConnectionStrings__IdentityConnection: >-
+        Server=sqlserver,1433;Database=Microsoft.eShopOnWeb.Identity;
+        User Id=sa;Password=${SA_PASSWORD};
+        TrustServerCertificate=True;MultipleActiveResultSets=True
+      ConnectionStrings__Redis: "redis:6379,abortConnect=false"
+      AZURE_STORAGE_CONNECTION_STRING: >-
+        DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;
+        AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KQk1JX8zd5Yw==;
+        BlobEndpoint=http://azurite:10000/devstoreaccount1;
+        QueueEndpoint=http://azurite:10001/devstoreaccount1
+      USE_AZURE_KEY_VAULT: "false"
+      LOG_LEVEL: Debug
+    ports:
+      - "127.0.0.1:5106:8080"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      azurite:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health/live || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # ── PublicApi ──────────────────────────────────────────────────────────────
+  eshoppublicapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api-runtime
+    env_file: .env.local
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      DEBUG: "true"
+      ConnectionStrings__CatalogConnection: >-
+        Server=sqlserver,1433;Database=Microsoft.eShopOnWeb.CatalogDb;
+        User Id=sa;Password=${SA_PASSWORD};
+        TrustServerCertificate=True;MultipleActiveResultSets=True
+      ConnectionStrings__IdentityConnection: >-
+        Server=sqlserver,1433;Database=Microsoft.eShopOnWeb.Identity;
+        User Id=sa;Password=${SA_PASSWORD};
+        TrustServerCertificate=True;MultipleActiveResultSets=True
+      ConnectionStrings__Redis: "redis:6379,abortConnect=false"
+      USE_AZURE_KEY_VAULT: "false"
+      LOG_LEVEL: Debug
+    ports:
+      - "127.0.0.1:5200:8081"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health/live || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  sqlserver-data:
+  redis-data:
+  azurite-data:

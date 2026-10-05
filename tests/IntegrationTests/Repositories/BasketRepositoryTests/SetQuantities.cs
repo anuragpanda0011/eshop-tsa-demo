@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.eShopWeb.ApplicationCore.Entities.BasketAggregate;
@@ -29,11 +29,17 @@ public class SetQuantities
     public async Task RemoveEmptyQuantities()
     {
         var basket = BasketBuilder.WithOneBasketItem();
-        var basketService = new BasketService(_basketRepository, null);
+        // Pass null for the logger — acceptable in unit/integration tests with in-memory DB.
+        var basketService = new BasketService(_basketRepository, null!);
         await _basketRepository.AddAsync(basket);
         _catalogContext.SaveChanges();
 
-        await basketService.SetQuantities(BasketBuilder.BasketId, new Dictionary<string, int>() { { BasketBuilder.BasketId.ToString(), 0 } });
+        await basketService.SetQuantities(
+            BasketBuilder.BasketId,
+            new Dictionary<string, int>
+            {
+                { BasketBuilder.BasketId.ToString(), 0 }
+            });
 
         Assert.Equal(0, basket.Items.Count);
     }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel.DataAnnotations;
 using System.IO;
 using System.Threading.Tasks;
@@ -8,6 +8,17 @@ namespace BlazorShared.Models;
 
 public class CatalogItem
 {
+    /// <summary>
+    /// Allowed image MIME extensions — kept in sync with server-side MIME validation.
+    /// </summary>
+    private static readonly string[] AllowedExtensions =
+    {
+        ".jpg", ".jpeg", ".png", ".gif"
+    };
+
+    /// <summary>Maximum image payload: 512 KB.</summary>
+    private const int ImageMaximumBytes = 512_000;
+
     public int Id { get; set; }
 
     public int CatalogTypeId { get; set; }
@@ -22,8 +33,9 @@ public class CatalogItem
     [Required(ErrorMessage = "The Description field is required")]
     public string Description { get; set; }
 
-    // decimal(18,2)
-    [RegularExpression(@"^\d+(\.\d{0,2})*$", ErrorMessage = "The field Price must be a positive number with maximum two decimals.")]
+    [RegularExpression(
+        @"^\d+(\.\d{0,2})*$",
+        ErrorMessage = "The field Price must be a positive number with maximum two decimals.")]
     [Range(0.01, 1000)]
     [DataType(DataType.Currency)]
     public decimal Price { get; set; }
@@ -32,56 +44,57 @@ public class CatalogItem
     public string PictureBase64 { get; set; }
     public string PictureName { get; set; }
 
-    private const int ImageMaximumBytes = 512000;
-
+    /// <summary>
+    /// Validates an image supplied as a Base64 string.
+    /// Returns null on success; otherwise an error message.
+    /// </summary>
     public static string IsValidImage(string pictureName, string pictureBase64)
     {
         if (string.IsNullOrEmpty(pictureBase64))
-        {
             return "File not found!";
+
+        byte[] fileData;
+        try
+        {
+            fileData = Convert.FromBase64String(pictureBase64);
         }
-        var fileData = Convert.FromBase64String(pictureBase64);
+        catch (FormatException)
+        {
+            return "Image data is not valid Base64.";
+        }
 
         if (fileData.Length <= 0)
-        {
             return "File length is 0!";
-        }
 
         if (fileData.Length > ImageMaximumBytes)
-        {
-            return "Maximum length is 512KB";
-        }
+            return "Maximum length is 512 KB.";
 
         if (!IsExtensionValid(pictureName))
-        {
-            return "File is not image";
-        }
+            return "File is not a supported image type (.jpg, .jpeg, .png, .gif).";
 
         return null;
     }
 
     public static async Task<string> DataToBase64(IFileListEntry fileItem)
     {
-        using (var reader = new StreamReader(fileItem.Data))
-        {
-            using (var memStream = new MemoryStream())
-            {
-                await reader.BaseStream.CopyToAsync(memStream);
-                var fileData = memStream.ToArray();
-                var encodedBase64 = Convert.ToBase64String(fileData);
-
-                return encodedBase64;
-            }
-        }
+        using var reader = new StreamReader(fileItem.Data);
+        using var memStream = new MemoryStream();
+        await reader.BaseStream.CopyToAsync(memStream);
+        return Convert.ToBase64String(memStream.ToArray());
     }
 
     private static bool IsExtensionValid(string fileName)
     {
-        var extension = Path.GetExtension(fileName);
+        if (string.IsNullOrWhiteSpace(fileName))
+            return false;
 
-        return string.Equals(extension, ".jpg", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(extension, ".gif", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(extension, ".jpeg", StringComparison.OrdinalIgnoreCase);
+        var extension = Path.GetExtension(fileName);
+        foreach (var allowed in AllowedExtensions)
+        {
+            if (string.Equals(extension, allowed, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 }

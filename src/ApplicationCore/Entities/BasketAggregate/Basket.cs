@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using Ardalis.GuardClauses;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
@@ -12,7 +12,6 @@ public class Basket : BaseEntity, IAggregateRoot
     public IReadOnlyCollection<BasketItem> Items => _items.AsReadOnly();
 
     public int TotalItems => _items.Sum(i => i.Quantity);
-
 
     public Basket(string buyerId)
     {
