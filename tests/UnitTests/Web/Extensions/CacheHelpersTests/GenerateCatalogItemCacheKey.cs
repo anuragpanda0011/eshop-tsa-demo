@@ -1,4 +1,4 @@
-﻿using Microsoft.eShopWeb.Web;
+using Microsoft.eShopWeb.Web;
 using Microsoft.eShopWeb.Web.Extensions;
 using Xunit;
 

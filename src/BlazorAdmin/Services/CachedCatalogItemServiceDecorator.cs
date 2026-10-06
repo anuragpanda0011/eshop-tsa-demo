@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -9,13 +9,23 @@ using Microsoft.Extensions.Logging;
 
 namespace BlazorAdmin.Services;
 
+/// <summary>
+/// Decorates <see cref="CatalogItemService"/> with a browser local-storage
+/// cache (TTL = 1 minute).  The server-side Redis cache is the authoritative
+/// cache for the API tier; this layer only reduces round-trips from the
+/// Blazor WASM client.
+/// </summary>
 public class CachedCatalogItemServiceDecorator : ICatalogItemService
 {
+    private const string CacheKey = "catalog_items";
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(1);
+
     private readonly ILocalStorageService _localStorageService;
     private readonly CatalogItemService _catalogItemService;
-    private ILogger<CachedCatalogItemServiceDecorator> _logger;
+    private readonly ILogger<CachedCatalogItemServiceDecorator> _logger;
 
-    public CachedCatalogItemServiceDecorator(ILocalStorageService localStorageService,
+    public CachedCatalogItemServiceDecorator(
+        ILocalStorageService localStorageService,
         CatalogItemService catalogItemService,
         ILogger<CachedCatalogItemServiceDecorator> logger)
     {
@@ -26,49 +36,20 @@ public class CachedCatalogItemServiceDecorator : ICatalogItemService
 
     public async Task<List<CatalogItem>> ListPaged(int pageSize)
     {
-        string key = "items";
-        var cacheEntry = await _localStorageService.GetItemAsync<CacheEntry<List<CatalogItem>>>(key);
-        if (cacheEntry != null)
-        {
-            _logger.LogInformation("Loading items from local storage.");
-            if (cacheEntry.DateCreated.AddMinutes(1) > DateTime.UtcNow)
-            {
-                return cacheEntry.Value;
-            }
-            else
-            {
-                _logger.LogInformation($"Loading {key} from local storage.");
-                await _localStorageService.RemoveItemAsync(key);
-            }
-        }
-
-        var items = await _catalogItemService.ListPaged(pageSize);
-        var entry = new CacheEntry<List<CatalogItem>>(items);
-        await _localStorageService.SetItemAsync(key, entry);
-        return items;
+        // Paged results bypass the flat-list cache to avoid mixing page sizes.
+        return await _catalogItemService.ListPaged(pageSize);
     }
 
     public async Task<List<CatalogItem>> List()
     {
-        string key = "items";
-        var cacheEntry = await _localStorageService.GetItemAsync<CacheEntry<List<CatalogItem>>>(key);
-        if (cacheEntry != null)
+        var cached = await TryGetFromCache();
+        if (cached != null)
         {
-            _logger.LogInformation("Loading items from local storage.");
-            if (cacheEntry.DateCreated.AddMinutes(1) > DateTime.UtcNow)
-            {
-                return cacheEntry.Value;
-            }
-            else
-            {
-                _logger.LogInformation($"Loading {key} from local storage.");
-                await _localStorageService.RemoveItemAsync(key);
-            }
+            return cached;
         }
 
         var items = await _catalogItemService.List();
-        var entry = new CacheEntry<List<CatalogItem>>(items);
-        await _localStorageService.SetItemAsync(key, entry);
+        await SetCache(items);
         return items;
     }
 
@@ -81,7 +62,6 @@ public class CachedCatalogItemServiceDecorator : ICatalogItemService
     {
         var result = await _catalogItemService.Create(catalogItem);
         await RefreshLocalStorageList();
-
         return result;
     }
 
@@ -89,7 +69,6 @@ public class CachedCatalogItemServiceDecorator : ICatalogItemService
     {
         var result = await _catalogItemService.Edit(catalogItem);
         await RefreshLocalStorageList();
-
         return result;
     }
 
@@ -97,17 +76,48 @@ public class CachedCatalogItemServiceDecorator : ICatalogItemService
     {
         var result = await _catalogItemService.Delete(id);
         await RefreshLocalStorageList();
-
         return result;
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    private async Task<List<CatalogItem>> TryGetFromCache()
+    {
+        var cacheEntry = await _localStorageService
+            .GetItemAsync<CacheEntry<List<CatalogItem>>>(CacheKey);
+
+        if (cacheEntry == null)
+        {
+            return null;
+        }
+
+        if (cacheEntry.DateCreated.Add(CacheTtl) > DateTime.UtcNow)
+        {
+            _logger.LogInformation(
+                "{{\"event\":\"cache_hit\",\"key\":\"{Key}\",\"source\":\"local_storage\"}}",
+                CacheKey);
+            return cacheEntry.Value;
+        }
+
+        _logger.LogInformation(
+            "{{\"event\":\"cache_expired\",\"key\":\"{Key}\",\"source\":\"local_storage\"}}",
+            CacheKey);
+        await _localStorageService.RemoveItemAsync(CacheKey);
+        return null;
+    }
+
+    private async Task SetCache(List<CatalogItem> items)
+    {
+        var entry = new CacheEntry<List<CatalogItem>>(items);
+        await _localStorageService.SetItemAsync(CacheKey, entry);
     }
 
     private async Task RefreshLocalStorageList()
     {
-        string key = "items";
-
-        await _localStorageService.RemoveItemAsync(key);
+        await _localStorageService.RemoveItemAsync(CacheKey);
         var items = await _catalogItemService.List();
-        var entry = new CacheEntry<List<CatalogItem>>(items);
-        await _localStorageService.SetItemAsync(key, entry);
+        await SetCache(items);
     }
 }

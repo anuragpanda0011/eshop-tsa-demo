@@ -1,0 +1,32 @@
+###############################################################################
+# Copy this file to terraform.tfvars and fill in your values.
+# DO NOT commit terraform.tfvars to source control.
+###############################################################################
+
+subscription_id = "00000000-0000-0000-0000-000000000000"
+tenant_id       = "00000000-0000-0000-0000-000000000000"
+
+location    = "eastus2"
+environment = "prod"
+project     = "eshop"
+
+tags = {
+  project     = "eShopOnWeb"
+  environment = "prod"
+  managed_by  = "terraform"
+  owner       = "platform-team"
+  cost_center = "12345"
+}
+
+# SQL — no sql_admin_password needed; Entra-only auth is used
+# administrator_login / administrator_login_password are not provisioned.
+entra_sql_admin_object_id = "00000000-0000-0000-0000-000000000000"
+entra_sql_admin_login     = "eshop-sql-admins"
+
+# DNS
+custom_domain_name      = "eshop.example.com"
+dns_zone_name           = "example.com"
+dns_zone_resource_group = "rg-dns"
+
+# Alerting
+alert_action_group_email = "platform-ops@example.com"

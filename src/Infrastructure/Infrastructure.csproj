@@ -1,21 +1,46 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
-	<PropertyGroup>		
-		<RootNamespace>Microsoft.eShopWeb.Infrastructure</RootNamespace>
-		<Nullable>enable</Nullable>
-	</PropertyGroup>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Microsoft.eShopWeb.Infrastructure</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
 
-	<ItemGroup>
-		<PackageReference Include="Ardalis.Specification.EntityFrameworkCore" />
-		<PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
-		<PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
-		<PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
-		<PackageReference Include="System.IdentityModel.Tokens.Jwt" />
-	</ItemGroup>
-	<ItemGroup>
-		<ProjectReference Include="..\ApplicationCore\ApplicationCore.csproj" />
-	</ItemGroup>
-	<ItemGroup>
-		<Folder Include="Data\Migrations\" />
-	</ItemGroup>
+  <ItemGroup>
+    <!-- EF Core / Identity -->
+    <PackageReference Include="Ardalis.Specification.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+
+    <!-- JWT -->
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
+
+    <!-- Azure Service Bus (structured event publishing) -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.17.5" />
+
+    <!-- Azure Communication Services – Email -->
+    <PackageReference Include="Azure.Communication.Email" Version="1.0.1" />
+
+    <!-- Azure Storage (blob / image uploads) -->
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.21.2" />
+
+    <!-- Azure Identity (Managed Identity, DefaultAzureCredential) -->
+    <PackageReference Include="Azure.Identity" Version="1.12.0" />
+
+    <!-- Redis distributed cache -->
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="8.0.8" />
+
+    <!-- Structured logging -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ApplicationCore\ApplicationCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Data\Migrations\" />
+  </ItemGroup>
+
 </Project>

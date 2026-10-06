@@ -1,9 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Microsoft.eShopWeb.Web.Controllers.Api;
 
-// No longer used - shown for reference only if using full controllers instead of Endpoints for APIs
-[Route("api/[controller]/[action]")]
+// Retained for reference. Active API endpoints use minimal-API pattern under /api/v1/.
+[Route("api/v1/[controller]/[action]")]
 [ApiController]
 public class BaseApiController : ControllerBase
 { }

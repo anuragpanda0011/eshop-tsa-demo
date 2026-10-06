@@ -1,4 +1,4 @@
-﻿using Microsoft.eShopWeb.ApplicationCore.Interfaces;
+using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 
 namespace Microsoft.eShopWeb.ApplicationCore.Services;
 
@@ -10,6 +10,12 @@ public class UriComposer : IUriComposer
 
     public string ComposePicUri(string uriTemplate)
     {
-        return uriTemplate.Replace("http://catalogbaseurltobereplaced", _catalogSettings.CatalogBaseUrl);
+        if (string.IsNullOrWhiteSpace(uriTemplate))
+            return string.Empty;
+
+        return uriTemplate.Replace(
+            "http://catalogbaseurltobereplaced",
+            _catalogSettings.CatalogBaseUrl,
+            System.StringComparison.OrdinalIgnoreCase);
     }
 }

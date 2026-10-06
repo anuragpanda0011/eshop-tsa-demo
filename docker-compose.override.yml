@@ -1,20 +1,57 @@
 version: '3.4'
 services:
- eshopwebmvc:
-   environment:
-     - ASPNETCORE_ENVIRONMENT=Docker
-     - ASPNETCORE_URLS=http://+:8080
-   ports:
-     - "5106:8080"
-   volumes:
-     - ~/.aspnet/https:/root/.aspnet/https:ro
-     - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
- eshoppublicapi:
-   environment:
-     - ASPNETCORE_ENVIRONMENT=Docker
-     - ASPNETCORE_URLS=http://+:8080
-   ports:
-     - "5200:8080"
-   volumes:
-     - ~/.aspnet/https:/root/.aspnet/https:ro
-     - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+  eshopwebmvc:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Docker
+      - ASPNETCORE_URLS=http://+:8080
+      # Local-dev overrides only — production secrets come from Azure Key Vault via Managed Identity.
+      # Set these in your shell or a local .env file; never commit real values.
+      - CATALOG_DB_CONNECTION_STRING=${CATALOG_DB_CONNECTION_STRING:-Server=sqlserver;Database=Microsoft.eShopOnWeb.CatalogDb;User Id=sa;Password=${SA_PASSWORD:-@someThingComplicated1234};TrustServerCertificate=True}
+      - IDENTITY_DB_CONNECTION_STRING=${IDENTITY_DB_CONNECTION_STRING:-Server=sqlserver;Database=Microsoft.eShopOnWeb.Identity;User Id=sa;Password=${SA_PASSWORD:-@someThingComplicated1234};TrustServerCertificate=True}
+      - REDIS_CONNECTION_STRING=${REDIS_CONNECTION_STRING:-redis:6379}
+      - AZURE_KEY_VAULT_ENDPOINT=${AZURE_KEY_VAULT_ENDPOINT:-}
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+      - AZURE_SERVICE_BUS_CONNECTION_STRING=${AZURE_SERVICE_BUS_CONNECTION_STRING:-}
+      - AZURE_STORAGE_ACCOUNT_NAME=${AZURE_STORAGE_ACCOUNT_NAME:-}
+      - AZURE_STORAGE_CONTAINER_NAME=${AZURE_STORAGE_CONTAINER_NAME:-catalog-images}
+      - AZURE_COMMUNICATION_SERVICES_CONNECTION_STRING=${AZURE_COMMUNICATION_SERVICES_CONNECTION_STRING:-}
+      - AZURE_COMMUNICATION_SENDER_ADDRESS=${AZURE_COMMUNICATION_SENDER_ADDRESS:-donotreply@example.com}
+      - JWT_SECRET_KEY_NAME=${JWT_SECRET_KEY_NAME:-JwtSigningKey}
+    ports:
+      - "5106:8080"
+    volumes:
+      - ~/.aspnet/https:/root/.aspnet/https:ro
+      - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+    depends_on:
+      - sqlserver
+      - redis
+
+  eshoppublicapi:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Docker
+      - ASPNETCORE_URLS=http://+:8080
+      - CATALOG_DB_CONNECTION_STRING=${CATALOG_DB_CONNECTION_STRING:-Server=sqlserver;Database=Microsoft.eShopOnWeb.CatalogDb;User Id=sa;Password=${SA_PASSWORD:-@someThingComplicated1234};TrustServerCertificate=True}
+      - IDENTITY_DB_CONNECTION_STRING=${IDENTITY_DB_CONNECTION_STRING:-Server=sqlserver;Database=Microsoft.eShopOnWeb.Identity;User Id=sa;Password=${SA_PASSWORD:-@someThingComplicated1234};TrustServerCertificate=True}
+      - REDIS_CONNECTION_STRING=${REDIS_CONNECTION_STRING:-redis:6379}
+      - AZURE_KEY_VAULT_ENDPOINT=${AZURE_KEY_VAULT_ENDPOINT:-}
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+      - AZURE_SERVICE_BUS_CONNECTION_STRING=${AZURE_SERVICE_BUS_CONNECTION_STRING:-}
+      - AZURE_STORAGE_ACCOUNT_NAME=${AZURE_STORAGE_ACCOUNT_NAME:-}
+      - AZURE_STORAGE_CONTAINER_NAME=${AZURE_STORAGE_CONTAINER_NAME:-catalog-images}
+      - AZURE_COMMUNICATION_SERVICES_CONNECTION_STRING=${AZURE_COMMUNICATION_SERVICES_CONNECTION_STRING:-}
+      - AZURE_COMMUNICATION_SENDER_ADDRESS=${AZURE_COMMUNICATION_SENDER_ADDRESS:-donotreply@example.com}
+      - JWT_SECRET_KEY_NAME=${JWT_SECRET_KEY_NAME:-JwtSigningKey}
+    ports:
+      - "5200:8080"
+    volumes:
+      - ~/.aspnet/https:/root/.aspnet/https:ro
+      - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+    depends_on:
+      - sqlserver
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --save "" --appendonly no

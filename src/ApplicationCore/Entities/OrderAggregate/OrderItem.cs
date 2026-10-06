@@ -1,4 +1,4 @@
-﻿namespace Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
+namespace Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
 
 public class OrderItem : BaseEntity
 {
@@ -6,8 +6,9 @@ public class OrderItem : BaseEntity
     public decimal UnitPrice { get; private set; }
     public int Units { get; private set; }
 
-    #pragma warning disable CS8618 // Required by Entity Framework
-    private OrderItem() {}
+#pragma warning disable CS8618 // Required by Entity Framework
+    private OrderItem() { }
+#pragma warning restore CS8618
 
     public OrderItem(CatalogItemOrdered itemOrdered, decimal unitPrice, int units)
     {

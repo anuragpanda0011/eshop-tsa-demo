@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -18,12 +18,12 @@ public class CatalogLookupDataService<TLookupData, TReponse>
     where TLookupData : LookupData
     where TReponse : ILookupDataResponse<TLookupData>
 {
-
     private readonly HttpClient _httpClient;
     private readonly ILogger<CatalogLookupDataService<TLookupData, TReponse>> _logger;
     private readonly string _apiUrl;
 
-    public CatalogLookupDataService(HttpClient httpClient,
+    public CatalogLookupDataService(
+        HttpClient httpClient,
         IOptions<BaseUrlConfiguration> baseUrlConfiguration,
         ILogger<CatalogLookupDataService<TLookupData, TReponse>> logger)
     {
@@ -34,10 +34,18 @@ public class CatalogLookupDataService<TLookupData, TReponse>
 
     public async Task<List<TLookupData>> List()
     {
-        var endpointName = typeof(TLookupData).GetCustomAttribute<EndpointAttribute>().Name;
-        _logger.LogInformation($"Fetching {typeof(TLookupData).Name} from API. Enpoint : {endpointName}");
+        var endpointName = typeof(TLookupData)
+            .GetCustomAttribute<EndpointAttribute>()?.Name
+            ?? typeof(TLookupData).Name.ToLowerInvariant();
 
-        var response = await _httpClient.GetFromJsonAsync<TReponse>($"{_apiUrl}{endpointName}");
-        return response.List;
+        _logger.LogInformation(
+            "{{\"event\":\"lookup_list\",\"type\":\"{Type}\",\"endpoint\":\"{Endpoint}\"}}",
+            typeof(TLookupData).Name,
+            endpointName);
+
+        var response = await _httpClient
+            .GetFromJsonAsync<TReponse>($"{_apiUrl}{endpointName}");
+
+        return response?.List ?? new List<TLookupData>();
     }
 }

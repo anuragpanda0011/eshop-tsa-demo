@@ -1,10 +1,21 @@
 {
     "recommendations": [
       "ms-dotnettools.csharp",
+      "ms-dotnettools.csdevkit",
       "formulahendry.dotnet-test-explorer",
       "ms-vscode.vscode-node-azure-pack",
       "ms-kubernetes-tools.vscode-kubernetes-tools",
       "redhat.vscode-yaml",
-      "ms-azuretools.azure-dev"
+      "ms-azuretools.azure-dev",
+      "ms-azuretools.vscode-azureappservice",
+      "ms-azuretools.vscode-azurestorage",
+      "ms-azuretools.vscode-azurefunctions",
+      "ms-azuretools.vscode-azurecontainerapps",
+      "ms-azuretools.vscode-bicep",
+      "ms-azure-devops.azure-pipelines",
+      "github.vscode-github-actions",
+      "ms-azuretools.vscode-azureresourcegroups",
+      "humao.rest-client",
+      "ms-mssql.mssql"
     ]
 }

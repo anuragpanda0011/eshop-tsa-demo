@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Encodings.Web;
 using Ardalis.GuardClauses;
 using Microsoft.AspNetCore.Authentication;
@@ -13,7 +13,7 @@ using Microsoft.eShopWeb.Web.ViewModels.Manage;
 namespace Microsoft.eShopWeb.Web.Controllers;
 
 [ApiExplorerSettings(IgnoreApi = true)]
-[Authorize] // Controllers that mainly require Authorization still use Controller/View; other pages use Pages
+[Authorize]
 [Route("[controller]/[action]")]
 public class ManageController : Controller
 {
@@ -27,11 +27,11 @@ public class ManageController : Controller
     private const string RecoveryCodesKey = nameof(RecoveryCodesKey);
 
     public ManageController(
-      UserManager<ApplicationUser> userManager,
-      SignInManager<ApplicationUser> signInManager,
-      IEmailSender emailSender,
-      IAppLogger<ManageController> logger,
-      UrlEncoder urlEncoder)
+        UserManager<ApplicationUser> userManager,
+        SignInManager<ApplicationUser> signInManager,
+        IEmailSender emailSender,
+        IAppLogger<ManageController> logger,
+        UrlEncoder urlEncoder)
     {
         _userManager = userManager;
         _signInManager = signInManager;
@@ -49,6 +49,8 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("MyAccount: unable to load user. TraceId={TraceId}",
+                HttpContext.TraceIdentifier);
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -76,6 +78,8 @@ public class ManageController : Controller
         var user = await _userManager.GetUserAsync(User);
         if (user == null)
         {
+            _logger.LogWarning("MyAccount POST: unable to load user. TraceId={TraceId}",
+                HttpContext.TraceIdentifier);
             throw new ApplicationException($"Unable to load user with ID '{_userManager.GetUserId(User)}'.");
         }
 
@@ -99,6 +103,7 @@ public class ManageController : Controller
             }
         }
 
+        _logger.LogInformation("User profile updated. TraceId={TraceId}", HttpContext.TraceIdentifier);
         StatusMessage = "Your profile has been updated";
         return RedirectToAction(nameof(MyAccount));
     }
@@ -121,6 +126,7 @@ public class ManageController : Controller
         var code = await _userManager.GenerateEmailConfirmationTokenAsync(user);
         var callbackUrl = Url.EmailConfirmationLink(user.Id, code, Request.Scheme);
         Guard.Against.Null(callbackUrl, nameof(callbackUrl));
+
         var email = user.Email;
         if (email == null)
         {
@@ -128,6 +134,9 @@ public class ManageController : Controller
         }
 
         await _emailSender.SendEmailConfirmationAsync(email, callbackUrl);
+
+        _logger.LogInformation("Verification email sent. UserId={UserId} TraceId={TraceId}",
+            user.Id, HttpContext.TraceIdentifier);
 
         StatusMessage = "Verification email sent. Please check your email.";
         return RedirectToAction(nameof(MyAccount));
@@ -176,7 +185,8 @@ public class ManageController : Controller
         }
 
         await _signInManager.SignInAsync(user, isPersistent: false);
-        _logger.LogInformation("User changed their password successfully.");
+        _logger.LogInformation("User changed their password successfully. TraceId={TraceId}",
+            HttpContext.TraceIdentifier);
         StatusMessage = "Your password has been changed.";
 
         return RedirectToAction(nameof(ChangePassword));
@@ -192,7 +202,6 @@ public class ManageController : Controller
         }
 
         var hasPassword = await _userManager.HasPasswordAsync(user);
-
         if (hasPassword)
         {
             return RedirectToAction(nameof(ChangePassword));
@@ -225,6 +234,7 @@ public class ManageController : Controller
         }
 
         await _signInManager.SignInAsync(user, isPersistent: false);
+        _logger.LogInformation("User set password. TraceId={TraceId}", HttpContext.TraceIdentifier);
         StatusMessage = "Your password has been set.";
 
         return RedirectToAction(nameof(SetPassword));
@@ -253,12 +263,11 @@ public class ManageController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> LinkLogin(string provider)
     {
-        // Clear the existing external cookie to ensure a clean login process
         await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
 
-        // Request a redirect to the external login provider to link a login for the current user
         var redirectUrl = Url.Action(nameof(LinkLoginCallback));
-        var properties = _signInManager.ConfigureExternalAuthenticationProperties(provider, redirectUrl, _userManager.GetUserId(User));
+        var properties = _signInManager.ConfigureExternalAuthenticationProperties(
+            provider, redirectUrl, _userManager.GetUserId(User));
         return new ChallengeResult(provider, properties);
     }
 
@@ -283,7 +292,6 @@ public class ManageController : Controller
             throw new ApplicationException($"Unexpected error occurred adding external login for user with ID '{user.Id}'.");
         }
 
-        // Clear the existing external cookie to ensure a clean login process
         await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
 
         StatusMessage = "The external login was added.";
@@ -367,7 +375,8 @@ public class ManageController : Controller
             throw new ApplicationException($"Unexpected error occured disabling 2FA for user with ID '{user.Id}'.");
         }
 
-        _logger.LogInformation("User with ID {UserId} has disabled 2fa.", user.Id);
+        _logger.LogInformation("User with ID {UserId} has disabled 2fa. TraceId={TraceId}",
+            user.Id, HttpContext.TraceIdentifier);
         return RedirectToAction(nameof(TwoFactorAuthentication));
     }
 
@@ -399,7 +408,6 @@ public class ManageController : Controller
         return View(model);
     }
 
-
     [HttpPost]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> EnableAuthenticator(EnableAuthenticatorViewModel model)
@@ -416,7 +424,6 @@ public class ManageController : Controller
             return View(model);
         }
 
-        // Strip spaces and hypens
         string verificationCode = model.Code?.Replace(" ", string.Empty).Replace("-", string.Empty) ?? "";
 
         var is2faTokenValid = await _userManager.VerifyTwoFactorTokenAsync(
@@ -430,8 +437,10 @@ public class ManageController : Controller
         }
 
         await _userManager.SetTwoFactorEnabledAsync(user, true);
-        _logger.LogInformation("User with ID {UserId} has enabled 2FA with an authenticator app.", user.Id);
-        var recoveryCodes = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10) ?? new List<string>();
+        _logger.LogInformation("User with ID {UserId} has enabled 2FA. TraceId={TraceId}",
+            user.Id, HttpContext.TraceIdentifier);
+        var recoveryCodes = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10)
+                            ?? new List<string>();
         TempData[RecoveryCodesKey] = recoveryCodes.ToArray();
 
         return RedirectToAction(nameof(ShowRecoveryCodes));
@@ -455,7 +464,8 @@ public class ManageController : Controller
 
         await _userManager.SetTwoFactorEnabledAsync(user, false);
         await _userManager.ResetAuthenticatorKeyAsync(user);
-        _logger.LogInformation("User with id '{UserId}' has reset their authentication app key.", user.Id);
+        _logger.LogInformation("User with id '{UserId}' has reset their authentication app key. TraceId={TraceId}",
+            user.Id, HttpContext.TraceIdentifier);
 
         return RedirectToAction(nameof(EnableAuthenticator));
     }
@@ -475,8 +485,10 @@ public class ManageController : Controller
             throw new ApplicationException($"Cannot generate recovery codes for user with ID '{user.Id}' as they do not have 2FA enabled.");
         }
 
-        var recoveryCodes = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10) ?? new List<string>();
-        _logger.LogInformation("User with ID {UserId} has generated new 2FA recovery codes.", user.Id);
+        var recoveryCodes = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10)
+                            ?? new List<string>();
+        _logger.LogInformation("User with ID {UserId} has generated new 2FA recovery codes. TraceId={TraceId}",
+            user.Id, HttpContext.TraceIdentifier);
 
         var model = new ShowRecoveryCodesViewModel { RecoveryCodes = recoveryCodes.ToArray() };
 
@@ -546,5 +558,4 @@ public class ManageController : Controller
         model.SharedKey = FormatKey(unformattedKey!);
         model.AuthenticatorUri = GenerateQrCodeUri(user.Email!, unformattedKey!);
     }
-
 }

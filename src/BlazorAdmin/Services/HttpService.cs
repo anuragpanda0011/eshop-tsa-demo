@@ -1,4 +1,4 @@
-﻿using System.Net.Http;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -10,12 +10,19 @@ namespace BlazorAdmin.Services;
 
 public class HttpService
 {
+    private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly HttpClient _httpClient;
     private readonly ToastService _toastService;
     private readonly string _apiUrl;
 
-
-    public HttpService(HttpClient httpClient, IOptions<BaseUrlConfiguration> baseUrlConfiguration, ToastService toastService)
+    public HttpService(
+        HttpClient httpClient,
+        IOptions<BaseUrlConfiguration> baseUrlConfiguration,
+        ToastService toastService)
     {
         _httpClient = httpClient;
         _toastService = toastService;
@@ -50,15 +57,24 @@ public class HttpService
         where T : class
     {
         var content = ToJson(dataToSend);
-
         var result = await _httpClient.PostAsync($"{_apiUrl}{uri}", content);
+
         if (!result.IsSuccessStatusCode)
         {
-            var exception = JsonSerializer.Deserialize<ErrorDetails>(await result.Content.ReadAsStringAsync(), new JsonSerializerOptions
+            var body = await result.Content.ReadAsStringAsync();
+            try
             {
-                PropertyNameCaseInsensitive = true
-            });
-            _toastService.ShowToast($"Error : {exception.Message}", ToastLevel.Error);
+                var exception = JsonSerializer.Deserialize<ErrorDetails>(body, _jsonOptions);
+                _toastService.ShowToast(
+                    $"Error: {exception?.Message ?? result.ReasonPhrase}",
+                    ToastLevel.Error);
+            }
+            catch
+            {
+                _toastService.ShowToast(
+                    $"Error: {result.ReasonPhrase}",
+                    ToastLevel.Error);
+            }
 
             return null;
         }
@@ -70,27 +86,34 @@ public class HttpService
         where T : class
     {
         var content = ToJson(dataToSend);
-
         var result = await _httpClient.PutAsync($"{_apiUrl}{uri}", content);
+
         if (!result.IsSuccessStatusCode)
         {
-            _toastService.ShowToast("Error", ToastLevel.Error);
+            _toastService.ShowToast(
+                $"Error: {result.ReasonPhrase}",
+                ToastLevel.Error);
             return null;
         }
 
         return await FromHttpResponseMessage<T>(result);
     }
 
-    private StringContent ToJson(object obj)
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    private static StringContent ToJson(object obj)
     {
-        return new StringContent(JsonSerializer.Serialize(obj), Encoding.UTF8, "application/json");
+        return new StringContent(
+            JsonSerializer.Serialize(obj),
+            Encoding.UTF8,
+            "application/json");
     }
 
-    private async Task<T> FromHttpResponseMessage<T>(HttpResponseMessage result)
+    private static async Task<T> FromHttpResponseMessage<T>(HttpResponseMessage result)
     {
-        return JsonSerializer.Deserialize<T>(await result.Content.ReadAsStringAsync(), new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
+        var body = await result.Content.ReadAsStringAsync();
+        return JsonSerializer.Deserialize<T>(body, _jsonOptions);
     }
 }

@@ -1,9 +1,49 @@
-.dockerignore
+# Secrets & certificates — never bake into image
 .env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+secrets/
+
+# Source control
 .git
+.github
 .gitignore
-.vs
-.vscode
-*/bin
-*/obj
-**/.toolstarget
+
+# Build outputs already excluded by multi-stage, but belt-and-suspenders
+**/bin/
+**/obj/
+**/out/
+
+# Python / Node artefacts (tooling in repo)
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+dist/
+build/
+
+# IaC state
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+infra/.terraform/
+
+# IDE & OS
+.vscode/
+.idea/
+*.suo
+*.user
+.DS_Store
+Thumbs.db
+
+# Test results
+TestResults/
+coverage/
+*.trx
+*.coveragexml
+
+# Docker Compose local overrides
+docker-compose.override.yml

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Ardalis.GuardClauses;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 
@@ -60,7 +60,8 @@ public class CatalogItem : BaseEntity, IAggregateRoot
             PictureUri = string.Empty;
             return;
         }
-        PictureUri = $"images\\products\\{pictureName}?{new DateTime().Ticks}";
+        // Use forward slash for cross-platform / Azure blob URI compatibility
+        PictureUri = $"images/products/{pictureName}?{DateTimeOffset.UtcNow.Ticks}";
     }
 
     public readonly record struct CatalogItemDetails

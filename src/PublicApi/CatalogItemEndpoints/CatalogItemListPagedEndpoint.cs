@@ -1,5 +1,8 @@
-﻿using System;
+using System;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using AutoMapper;
 using Microsoft.AspNetCore.Builder;
@@ -8,6 +11,8 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.eShopWeb.ApplicationCore.Entities;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 using Microsoft.eShopWeb.ApplicationCore.Specifications;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 using MinimalApi.Endpoint;
 
 namespace Microsoft.eShopWeb.PublicApi.CatalogItemEndpoints;
@@ -19,19 +24,31 @@ public class CatalogItemListPagedEndpoint : IEndpoint<IResult, ListPagedCatalogI
 {
     private readonly IUriComposer _uriComposer;
     private readonly IMapper _mapper;
+    private readonly IDistributedCache _cache;
+    private readonly ILogger<CatalogItemListPagedEndpoint> _logger;
+    private const int CacheTtlSeconds = 60;
 
-    public CatalogItemListPagedEndpoint(IUriComposer uriComposer, IMapper mapper)
+    public CatalogItemListPagedEndpoint(
+        IUriComposer uriComposer,
+        IMapper mapper,
+        IDistributedCache cache,
+        ILogger<CatalogItemListPagedEndpoint> logger)
     {
         _uriComposer = uriComposer;
         _mapper = mapper;
+        _cache = cache;
+        _logger = logger;
     }
 
     public void AddRoute(IEndpointRouteBuilder app)
     {
-        app.MapGet("api/catalog-items",
-            async (int? pageSize, int? pageIndex, int? catalogBrandId, int? catalogTypeId, IRepository<CatalogItem> itemRepository) =>
+        app.MapGet("api/v1/catalog-items",
+            async (int? pageSize, int? pageIndex, int? catalogBrandId, int? catalogTypeId,
+                   IRepository<CatalogItem> itemRepository) =>
             {
-                return await HandleAsync(new ListPagedCatalogItemRequest(pageSize, pageIndex, catalogBrandId, catalogTypeId), itemRepository);
+                return await HandleAsync(
+                    new ListPagedCatalogItemRequest(pageSize, pageIndex, catalogBrandId, catalogTypeId),
+                    itemRepository);
             })
             .Produces<ListPagedCatalogItemResponse>()
             .WithTags("CatalogItemEndpoints");
@@ -39,7 +56,24 @@ public class CatalogItemListPagedEndpoint : IEndpoint<IResult, ListPagedCatalogI
 
     public async Task<IResult> HandleAsync(ListPagedCatalogItemRequest request, IRepository<CatalogItem> itemRepository)
     {
-        await Task.Delay(1000);
+        var rawKey = $"catalog-items:pi={request.PageIndex}:ps={request.PageSize}:brand={request.CatalogBrandId}:type={request.CatalogTypeId}";
+        var cacheKey = ComputeCacheKey(rawKey);
+
+        try
+        {
+            var cached = await _cache.GetStringAsync(cacheKey);
+            if (cached is not null)
+            {
+                _logger.LogInformation("{Timestamp} Event=CacheHit Key={Key}", DateTimeOffset.UtcNow, cacheKey);
+                var cachedResponse = JsonSerializer.Deserialize<ListPagedCatalogItemResponse>(cached);
+                return Results.Ok(cachedResponse);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "{Timestamp} Event=CacheReadError Key={Key}", DateTimeOffset.UtcNow, cacheKey);
+        }
+
         var response = new ListPagedCatalogItemResponse(request.CorrelationId());
 
         var filterSpec = new CatalogFilterSpecification(request.CatalogBrandId, request.CatalogTypeId);
@@ -59,15 +93,29 @@ public class CatalogItemListPagedEndpoint : IEndpoint<IResult, ListPagedCatalogI
             item.PictureUri = _uriComposer.ComposePicUri(item.PictureUri);
         }
 
-        if (request.PageSize > 0)
+        response.PageCount = request.PageSize > 0
+            ? (int)Math.Ceiling((decimal)totalItems / request.PageSize)
+            : (totalItems > 0 ? 1 : 0);
+
+        try
         {
-            response.PageCount = int.Parse(Math.Ceiling((decimal)totalItems / request.PageSize).ToString());
+            var serialized = JsonSerializer.Serialize(response);
+            await _cache.SetStringAsync(cacheKey, serialized, new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(CacheTtlSeconds)
+            });
         }
-        else
+        catch (Exception ex)
         {
-            response.PageCount = totalItems > 0 ? 1 : 0;
+            _logger.LogWarning(ex, "{Timestamp} Event=CacheWriteError Key={Key}", DateTimeOffset.UtcNow, cacheKey);
         }
 
         return Results.Ok(response);
+    }
+
+    private static string ComputeCacheKey(string input)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 }

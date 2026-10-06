@@ -16,6 +16,99 @@
     },
     "appUserPassword": {
       "value": "$(secretOrRandomPassword ${AZURE_KEY_VAULT_NAME} appUserPassword)"
+    },
+    "jwtSecretKey": {
+      "value": "$(secretOrRandomPassword ${AZURE_KEY_VAULT_NAME} jwtSecretKey)"
+    },
+    "redisCacheConnectionString": {
+      "value": "$(secretOrRandomPassword ${AZURE_KEY_VAULT_NAME} redisCacheConnectionString)"
+    },
+    "appServicePlanSku": {
+      "value": "${APP_SERVICE_PLAN_SKU}"
+    },
+    "sqlSkuName": {
+      "value": "${SQL_SKU_NAME}"
+    },
+    "sqlSkuTier": {
+      "value": "${SQL_SKU_TIER}"
+    },
+    "sqlSkuCapacity": {
+      "value": "${SQL_SKU_CAPACITY}"
+    },
+    "enableVnetIntegration": {
+      "value": "${ENABLE_VNET_INTEGRATION}"
+    },
+    "enablePrivateEndpoints": {
+      "value": "${ENABLE_PRIVATE_ENDPOINTS}"
+    },
+    "enableZoneRedundancy": {
+      "value": "${ENABLE_ZONE_REDUNDANCY}"
+    },
+    "logAnalyticsWorkspaceId": {
+      "value": "${AZURE_LOG_ANALYTICS_WORKSPACE_ID}"
+    },
+    "applicationInsightsConnectionString": {
+      "value": "$(secretOrRandomPassword ${AZURE_KEY_VAULT_NAME} applicationInsightsConnectionString)"
+    },
+    "frontDoorProfileName": {
+      "value": "${AZURE_FRONT_DOOR_PROFILE_NAME}"
+    },
+    "enableFrontDoor": {
+      "value": "${ENABLE_FRONT_DOOR}"
+    },
+    "catalogDbName": {
+      "value": "${CATALOG_DB_NAME}"
+    },
+    "identityDbName": {
+      "value": "${IDENTITY_DB_NAME}"
+    },
+    "keyVaultName": {
+      "value": "${AZURE_KEY_VAULT_NAME}"
+    },
+    "webAppName": {
+      "value": "${AZURE_WEB_APP_NAME}"
+    },
+    "publicApiAppName": {
+      "value": "${AZURE_PUBLIC_API_APP_NAME}"
+    },
+    "containerRegistryName": {
+      "value": "${AZURE_CONTAINER_REGISTRY_NAME}"
+    },
+    "sqlServerAdminLogin": {
+      "value": "${SQL_ADMIN_LOGIN}"
+    },
+    "enableAutoscale": {
+      "value": "${ENABLE_AUTOSCALE}"
+    },
+    "autoscaleMinInstances": {
+      "value": "${AUTOSCALE_MIN_INSTANCES}"
+    },
+    "autoscaleMaxInstances": {
+      "value": "${AUTOSCALE_MAX_INSTANCES}"
+    },
+    "autoscaleDefaultInstances": {
+      "value": "${AUTOSCALE_DEFAULT_INSTANCES}"
+    },
+    "dataProtectionKeyVaultSecretName": {
+      "value": "${DATA_PROTECTION_KEY_VAULT_SECRET_NAME}"
+    },
+    "serviceBusNamespaceName": {
+      "value": "${AZURE_SERVICE_BUS_NAMESPACE_NAME}"
+    },
+    "serviceBusConnectionString": {
+      "value": "$(secretOrRandomPassword ${AZURE_KEY_VAULT_NAME} serviceBusConnectionString)"
+    },
+    "communicationServicesConnectionString": {
+      "value": "$(secretOrRandomPassword ${AZURE_KEY_VAULT_NAME} communicationServicesConnectionString)"
+    },
+    "orderConfirmationSenderEmail": {
+      "value": "${ORDER_CONFIRMATION_SENDER_EMAIL}"
+    },
+    "storageAccountName": {
+      "value": "${AZURE_STORAGE_ACCOUNT_NAME}"
+    },
+    "storageProductImageContainerName": {
+      "value": "${STORAGE_PRODUCT_IMAGE_CONTAINER_NAME}"
     }
   }
 }

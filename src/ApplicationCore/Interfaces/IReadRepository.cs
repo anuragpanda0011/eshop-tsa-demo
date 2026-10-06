@@ -1,4 +1,4 @@
-﻿using Ardalis.Specification;
+using Ardalis.Specification;
 
 namespace Microsoft.eShopWeb.ApplicationCore.Interfaces;
 

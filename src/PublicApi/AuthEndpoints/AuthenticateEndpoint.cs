@@ -1,10 +1,15 @@
-﻿using System.Threading;
+using System;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Ardalis.ApiEndpoints;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 using Microsoft.eShopWeb.Infrastructure.Identity;
+using Microsoft.Extensions.Logging;
 using Swashbuckle.AspNetCore.Annotations;
 
 namespace Microsoft.eShopWeb.PublicApi.AuthEndpoints;
@@ -18,30 +23,40 @@ public class AuthenticateEndpoint : EndpointBaseAsync
 {
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly ITokenClaimsService _tokenClaimsService;
+    private readonly ILogger<AuthenticateEndpoint> _logger;
 
-    public AuthenticateEndpoint(SignInManager<ApplicationUser> signInManager,
-        ITokenClaimsService tokenClaimsService)
+    public AuthenticateEndpoint(
+        SignInManager<ApplicationUser> signInManager,
+        ITokenClaimsService tokenClaimsService,
+        ILogger<AuthenticateEndpoint> logger)
     {
         _signInManager = signInManager;
         _tokenClaimsService = tokenClaimsService;
+        _logger = logger;
     }
 
-    [HttpPost("api/authenticate")]
+    [HttpPost("api/v1/authenticate")]
+    [EnableRateLimiting("auth")]
     [SwaggerOperation(
         Summary = "Authenticates a user",
         Description = "Authenticates a user",
         OperationId = "auth.authenticate",
         Tags = new[] { "AuthEndpoints" })
     ]
-    public override async Task<ActionResult<AuthenticateResponse>> HandleAsync(AuthenticateRequest request,
+    public override async Task<ActionResult<AuthenticateResponse>> HandleAsync(
+        AuthenticateRequest request,
         CancellationToken cancellationToken = default)
     {
+        var traceId = HttpContext.TraceIdentifier;
         var response = new AuthenticateResponse(request.CorrelationId());
 
-        // This doesn't count login failures towards account lockout
-        // To enable password failures to trigger account lockout, set lockoutOnFailure: true
-        //var result = await _signInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
-        var result = await _signInManager.PasswordSignInAsync(request.Username, request.Password, false, true);
+        _logger.LogInformation(
+            "{Timestamp} TraceId={TraceId} CorrelationId={CorrelationId} Event=AuthAttempt Username={Username}",
+            DateTimeOffset.UtcNow, traceId, request.CorrelationId(), request.Username);
+
+        // lockoutOnFailure: true to count failures toward lockout
+        var result = await _signInManager.PasswordSignInAsync(
+            request.Username, request.Password, isPersistent: false, lockoutOnFailure: true);
 
         response.Result = result.Succeeded;
         response.IsLockedOut = result.IsLockedOut;
@@ -52,6 +67,16 @@ public class AuthenticateEndpoint : EndpointBaseAsync
         if (result.Succeeded)
         {
             response.Token = await _tokenClaimsService.GetTokenAsync(request.Username);
+            _logger.LogInformation(
+                "{Timestamp} TraceId={TraceId} CorrelationId={CorrelationId} Event=AuthSuccess Username={Username}",
+                DateTimeOffset.UtcNow, traceId, request.CorrelationId(), request.Username);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "{Timestamp} TraceId={TraceId} CorrelationId={CorrelationId} Event=AuthFailure Username={Username} IsLockedOut={IsLockedOut} IsNotAllowed={IsNotAllowed}",
+                DateTimeOffset.UtcNow, traceId, request.CorrelationId(), request.Username,
+                result.IsLockedOut, result.IsNotAllowed);
         }
 
         return response;
