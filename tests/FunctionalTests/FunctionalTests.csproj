@@ -1,6 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>  
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>Microsoft.eShopWeb.FunctionalTests</RootNamespace>
     <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
@@ -17,9 +18,10 @@
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
-    <PackageReference Include="xunit.runner.visualstudio" />     
+    <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
-    <DotNetCliToolReference Include="dotnet-xunit" Version="2.3.1" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
   </ItemGroup>
 
   <ItemGroup>

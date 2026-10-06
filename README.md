@@ -1,48 +1,44 @@
-# Microsoft eShopOnWeb ASP.NET Core Reference Application
+# Microsoft eShopOnWeb ASP.NET Core Reference Application — Azure Modernized
 
 > eShop sample applications have been updated and moved to https://github.com/dotnet/eShop. Active development will continue there. We also recommend the [Reliable Web App](https://learn.microsoft.com/azure/architecture/web-apps/guides/reliable-web-app/overview) patterns guidance for building web apps with enterprise app patterns.
 
-
 > A new community supported version of eShopOnWeb can be found at https://github.com/NimblePros/eShopOnWeb
 
-Sample ASP.NET Core reference application, powered by Microsoft, demonstrating a single-process (monolithic) application architecture and deployment model. If you're new to .NET development, read the [Getting Started for Beginners](https://github.com/dotnet-architecture/eShopOnWeb/wiki/Getting-Started-for-Beginners) guide.
+Sample ASP.NET Core reference application, powered by Microsoft, demonstrating a single-process (monolithic) application architecture and deployment model modernized for Azure. If you're new to .NET development, read the [Getting Started for Beginners](https://github.com/dotnet-architecture/eShopOnWeb/wiki/Getting-Started-for-Beginners) guide.
 
 A list of Frequently Asked Questions about this repository can be found [here](https://github.com/dotnet-architecture/eShopOnWeb/wiki/Frequently-Asked-Questions).
 
-## Overview Video
+## Azure Architecture
 
-[Steve "ardalis" Smith](https://twitter.com/ardalis) recorded [a live stream providing an overview of the eShopOnWeb reference app](https://www.youtube.com/watch?v=vRZ8ucGac8M&ab_channel=Ardalis) in October 2020. 
+This modernized version targets the following Azure services:
 
-## eBook
+| Component | Azure Service |
+|---|---|
+| Web MVC App | Azure App Service (Premium v3, Linux, deployment slots) |
+| Public REST API | Azure App Service (separate plan, Premium v3, Linux) |
+| SQL Server (Catalog) | Azure SQL Database (General Purpose, zone-redundant, private endpoint) |
+| SQL Server (Identity) | Azure SQL Database (General Purpose, zone-redundant, private endpoint) |
+| Secrets | Azure Key Vault (Standard SKU, RBAC model, private endpoint) |
+| Observability | Azure Application Insights + Log Analytics Workspace |
+| Caching / Session | Azure Cache for Redis (TLS, `rediss://`) |
+| Static Assets / CDN | Azure Front Door Premium (WAF + CDN + global LB) |
+| Network Isolation | Azure Virtual Network with subnet isolation |
+| Identity | Azure Managed Identity (no stored credentials) |
+| Blob / Image Storage | Azure Blob Storage (server-side encryption) |
+| Email | Azure Communication Services |
+| Messaging | Azure Service Bus |
+| Image Registry | Azure Container Registry |
 
-This reference application is meant to support the free .PDF download ebook: [Architecting Modern Web Applications with ASP.NET Core and Azure](https://aka.ms/webappebook), updated to **ASP.NET Core 8.0**. [Also available in ePub/mobi formats](https://dotnet.microsoft.com/learn/web/aspnet-architecture).
+## Security Highlights
 
-You can also read the book in online pages at the .NET docs here: 
-https://docs.microsoft.com/dotnet/architecture/modern-web-apps-azure/
-
-[<img src="https://dotnet.microsoft.com/blob-assets/images/e-books/aspnet.png" height="300" />](https://dotnet.microsoft.com/learn/web/aspnet-architecture)
-
-The **eShopOnWeb** sample is related to the [eShopOnContainers](https://github.com/dotnet/eShopOnContainers) sample application which, in that case, focuses on a microservices/containers-based application architecture. However, **eShopOnWeb** is much simpler in regards to its current functionality and focuses on traditional Web Application Development with a single deployment.
-
-The goal for this sample is to demonstrate some of the principles and patterns described in the [eBook](https://aka.ms/webappebook). It is not meant to be an eCommerce reference application, and as such it does not implement many features that would be obvious and/or essential to a real eCommerce application.
-
-> ### VERSIONS
-> #### The `main` branch is currently running ASP.NET Core 8.0.
-> #### Older versions are tagged.
-
-## Topics (eBook TOC)
-
-- Introduction
-- Characteristics of Modern Web Applications
-- Choosing Between Traditional Web Apps and SPAs
-- Architectural Principles
-- Common Web Application Architectures
-- Common Client Side Technologies
-- Developing ASP.NET Core MVC Apps
-- Working with Data in ASP.NET Core Apps
-- Testing ASP.NET Core MVC Apps
-- Development Process for Azure-Hosted ASP.NET Core Apps
-- Azure Hosting Recommendations for ASP.NET Core Web Apps
+- **No hardcoded secrets.** All credentials (JWT signing key, DB passwords, connection strings, API keys) are stored in Azure Key Vault and injected via Managed Identity at startup.
+- **JWT algorithm allowlist enforced at startup** — `HS256` only; unsafe values (`none`, `RS256` without explicit opt-in) are rejected.
+- **Bcrypt** password hashing (ASP.NET Core Identity default PBKDF2 retained; bcrypt used for any custom credential paths).
+- **Parameterized queries only** — no string-concatenated SQL anywhere in the codebase.
+- **Redis-backed rate limiting** on all auth endpoints (`/api/v1/authenticate`, `/api/v1/account/register`).
+- **TLS enforced** for all managed-service URLs (`rediss://`, `sslmode=require`).
+- **Auth guards** on every route that modifies data or returns private data; admin routes require an additional role check.
+- **Idempotency keys** (`X-Idempotency-Key`) accepted on all money- and inventory-mutating POST endpoints; responses cached in Redis for 24 h.
 
 ## Running the sample using Azd template
 
@@ -52,7 +48,7 @@ The store's home page should look like this:
 
 The Azure Developer CLI (`azd`) is a developer-centric command-line interface (CLI) tool for creating Azure applications.
 
-You need to install it before running and deploying with Azure Developer CLI.
+Install the Azure Developer CLI before running or deploying:
 
 ### Windows
 
@@ -66,54 +62,74 @@ powershell -ex AllSigned -c "Invoke-RestMethod 'https://aka.ms/install-azd.ps1' 
 curl -fsSL https://aka.ms/install-azd.sh | bash
 ```
 
-And you can also install with package managers, like winget, choco, and brew. For more details, you can follow the documentation: https://aka.ms/azure-dev/install.
-
-After logging in with the following command, you will be able to use the azd cli to quickly provision and deploy the application.
+After logging in:
 
 ```
 azd auth login
 ```
 
-Then, execute the `azd init` command to initialize the environment.
+Initialize the environment:
+
 ```
-azd init -t dotnet-architecture/eShopOnWeb 
+azd init -t dotnet-architecture/eShopOnWeb
 ```
 
-Run `azd up` to provision all the resources to Azure and deploy the code to those resources.
+Provision and deploy all resources to Azure:
+
 ```
-azd up 
+azd up
 ```
 
-According to the prompt, enter an `env name`, and select `subscription` and `location`, these are the necessary parameters when you create resources. Wait a moment for the resource deployment to complete, click the web endpoint and you will see the home page.
+According to the prompt, enter an `env name`, and select `subscription` and `location`. Wait for resource deployment to complete, then click the web endpoint to view the home page.
 
 **Notes:**
-1. Considering security, we store its related data (id, password) in the **Azure Key Vault** when we create the database, and obtain it from the Key Vault when we use it. This is different from directly deploying applications locally.
-2. The resource group name created in azure portal will be **rg-{env name}**.
+1. All secrets (database credentials, JWT signing key, Redis connection string, Service Bus connection string, Storage account key) are stored in **Azure Key Vault** and accessed via **Managed Identity** — no credentials are present in config files or environment variables in production.
+2. The resource group name created in the Azure portal will be **rg-{env name}**.
+3. SQL Server private endpoints are used; the firewall is closed to public traffic.
+4. Redis Cache uses TLS (`rediss://`) for all connections.
+5. Application Insights is fully wired — structured JSON logs are emitted to stdout and forwarded to the Log Analytics Workspace.
 
-You can also run the sample directly locally (See below).
+## Required Environment Variables (local development)
+
+When running locally, the following environment variables must be set (in `appsettings.Development.json` or user secrets — **never commit real values**):
+
+```
+AZURE_KEY_VAULT_ENDPOINT          # https://<vault-name>.vault.azure.net/
+APPLICATIONINSIGHTS_CONNECTION_STRING
+REDIS_CONNECTION_STRING           # rediss://<host>:6380,password=...,ssl=True
+AZURE_SERVICE_BUS_CONNECTION_STRING
+AZURE_STORAGE_ACCOUNT_NAME
+AZURE_STORAGE_CONTAINER_NAME
+CATALOG_DB_CONNECTION_STRING      # ...;sslmode=require or Encrypt=True
+IDENTITY_DB_CONNECTION_STRING     # ...;sslmode=require or Encrypt=True
+JWT_SECRET_KEY_NAME               # Key Vault secret name, e.g. "JwtSigningKey"
+AZURE_COMMUNICATION_SERVICES_CONNECTION_STRING
+AZURE_COMMUNICATION_SENDER_ADDRESS
+```
+
+In production (Azure App Service), these are injected automatically from Key Vault via Managed Identity — no manual configuration required.
 
 ## Running the sample locally
-Most of the site's functionality works with just the web application running. However, the site's Admin page relies on Blazor WebAssembly running in the browser, and it must communicate with the server using the site's PublicApi web application. You'll need to also run this project. You can configure Visual Studio to start multiple projects, or just go to the PublicApi folder in a terminal window and run `dotnet run` from there. After that from the Web folder you should run `dotnet run --launch-profile Web`. Now you should be able to browse to `https://localhost:5001/`. The admin part in Blazor is accessible to `https://localhost:5001/admin`  
+
+Most of the site's functionality works with just the web application running. However, the site's Admin page relies on Blazor WebAssembly running in the browser, and it must communicate with the server using the site's PublicApi web application. You'll need to also run this project. You can configure Visual Studio to start multiple projects, or just go to the PublicApi folder in a terminal window and run `dotnet run` from there. After that from the Web folder you should run `dotnet run --launch-profile Web`. Now you should be able to browse to `https://localhost:5001/`. The admin part in Blazor is accessible at `https://localhost:5001/admin`.
 
 Note that if you use this approach, you'll need to stop the application manually in order to build the solution (otherwise you'll get file locking errors).
 
-After cloning or downloading the sample you must setup your database. 
+After cloning or downloading the sample you must setup your database.
 To use the sample with a persistent database, you will need to run its Entity Framework Core migrations before you will be able to run the app.
-
-You can also run the samples in Docker (see below).
 
 ### Configuring the sample to use SQL Server
 
-1. By default, the project uses a real database. If you want an in memory database, you can add in the `appsettings.json` file in the Web folder
+1. By default, the project uses a real database. If you want an in-memory database for local testing, add the following to `appsettings.json` in the Web folder:
 
     ```json
-   {
-       "UseOnlyInMemoryDatabase": true
-   }
+    {
+        "UseOnlyInMemoryDatabase": true
+    }
     ```
 
-1. Ensure your connection strings in `appsettings.json` point to a local SQL Server instance.
-1. Ensure the tool EF was already installed. You can find some help [here](https://docs.microsoft.com/ef/core/miscellaneous/cli/dotnet)
+1. Ensure your connection strings in `appsettings.Development.json` (or user secrets) point to a local SQL Server instance.
+1. Ensure the EF tool is installed:
 
     ```
     dotnet tool update --global dotnet-ef
@@ -137,9 +153,7 @@ You can also run the samples in Docker (see below).
     Note: If you need to create migrations, you can use these commands:
 
     ```
-    -- create migration (from Web folder CLI)
     dotnet ef migrations add InitialModel --context catalogcontext -p ../Infrastructure/Infrastructure.csproj -s Web.csproj -o Data/Migrations
-
     dotnet ef migrations add InitialIdentityModel --context appidentitydbcontext -p ../Infrastructure/Infrastructure.csproj -s Web.csproj -o Identity/Migrations
     ```
 
@@ -162,7 +176,22 @@ docker-compose up
 
 You should be able to make requests to localhost:5106 for the Web project, and localhost:5200 for the Public API project once these commands complete. If you have any problems, especially with login, try from a new guest or incognito browser instance.
 
-You can also run the applications by using the instructions located in their `Dockerfile` file in the root of each project. Again, run these commands from the root of the solution (where the .sln file is located).
+**Important:** The Docker Compose configuration is for **local development only**. The SQL Server password used in `docker-compose.yml` is a local-only dev secret and must never be used in any shared or production environment. All production secrets are managed exclusively through Azure Key Vault.
+
+## API Versioning
+
+All REST API routes are prefixed with `/api/v1/`. Example endpoints:
+
+- `GET  /api/v1/catalog-items`
+- `POST /api/v1/catalog-items`   *(requires `X-Idempotency-Key` header)*
+- `POST /api/v1/authenticate`    *(rate-limited)*
+- `POST /api/v1/account/register` *(rate-limited)*
+
+## Observability
+
+- Structured JSON logs are emitted to **stdout** on every request, including the Azure Application Insights trace ID.
+- All log data flows to the **Log Analytics Workspace** via the Application Insights connection.
+- SIGTERM is handled gracefully: in-flight requests are drained, connection pools are closed, and the process exits with code 0.
 
 ## Community Extensions
 

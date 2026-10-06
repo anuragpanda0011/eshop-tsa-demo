@@ -1,4 +1,11 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WARNING: This local file-based Data Protection key is retained only for
+  local development fallback. In all non-Development environments, Data
+  Protection keys are stored in Azure Key Vault and Azure Blob Storage
+  (or Redis) via the DataProtection configuration in Program.cs.
+  Do NOT commit real production keys to source control.
+-->
 <key id="768c1632-cf7b-41a9-bb7a-bff228ae8fba" version="1">
   <creationDate>2021-12-01T14:37:52.0438755Z</creationDate>
   <activationDate>2021-12-01T14:37:52.0246578Z</activationDate>
@@ -8,8 +15,8 @@
       <encryption algorithm="AES_256_CBC" />
       <validation algorithm="HMACSHA256" />
       <masterKey p4:requiresEncryption="true" xmlns:p4="http://schemas.asp.net/2015/03/dataProtection">
-        <!-- Warning: the key below is in an unencrypted form. -->
-        <value>PF3GdfO7PnvHYvXyD5nxmoQ91pY9qfA0rjRsdXHdUQbE1Mg9Xok2gXLY2zn8XemsySH37UGrGknht8u/PlehWg==</value>
+        <!-- Key value intentionally redacted. Provide via Azure Key Vault in production. -->
+        <value>REDACTED-USE-AZURE-KEY-VAULT-IN-PRODUCTION</value>
       </masterKey>
     </descriptor>
   </descriptor>

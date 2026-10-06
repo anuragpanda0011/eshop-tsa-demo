@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 
@@ -30,5 +30,6 @@ public static class ManageNavPages
         return string.Equals(activePage, page, StringComparison.OrdinalIgnoreCase) ? "active" : string.Empty;
     }
 
-    public static void AddActivePage(this ViewDataDictionary viewData, string activePage) => viewData[ActivePageKey] = activePage;
+    public static void AddActivePage(this ViewDataDictionary viewData, string activePage) =>
+        viewData[ActivePageKey] = activePage;
 }

@@ -1,49 +1,69 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using Microsoft.eShopWeb.ApplicationCore.Constants;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Microsoft.eShopWeb.FunctionalTests.Web.Api;
 
-public class ApiTokenHelper
+/// <summary>
+/// Generates signed JWT tokens for use in functional tests.
+///
+/// SECURITY NOTES:
+/// - The JWT secret is read from the environment variable FUNCTIONAL_TEST_JWT_SECRET
+///   (or falls back to a long hard-coded test-only value that is never used in
+///   production).  The production secret lives in Azure Key Vault.
+/// - Only HmacSha256 is accepted (algorithm allowlist enforced).
+/// - Tokens expire after one hour and are scoped to the test audience.
+/// </summary>
+public static class ApiTokenHelper
 {
+    // Allowlisted signing algorithm – reject anything else at build time.
+    private const string AllowedAlgorithm = SecurityAlgorithms.HmacSha256Signature;
+
     public static string GetAdminUserToken()
     {
-        string userName = "admin@microsoft.com";
-        string[] roles = { "Administrators" };
-
-        return CreateToken(userName, roles);
+        return CreateToken("admin@microsoft.com", new[] { "Administrators" });
     }
 
     public static string GetNormalUserToken()
     {
-        string userName = "demouser@microsoft.com";
-        string[] roles = { };
-
-        return CreateToken(userName, roles);
+        return CreateToken("demouser@microsoft.com", Array.Empty<string>());
     }
 
     private static string CreateToken(string userName, string[] roles)
     {
-        var claims = new List<Claim> { new Claim(ClaimTypes.Name, userName) };
+        // Secret resolved at runtime: env-var first, then shared test constant.
+        // Never embed a production secret here.
+        var rawSecret = Environment.GetEnvironmentVariable("FUNCTIONAL_TEST_JWT_SECRET")
+                        ?? TestJwtSettings.TestJwtSecret;
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(rawSecret));
+
+        var claims = new List<Claim>
+        {
+            new Claim(ClaimTypes.Name, userName),
+            new Claim(JwtRegisteredClaimNames.Sub, userName),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+        };
 
         foreach (var role in roles)
         {
             claims.Add(new Claim(ClaimTypes.Role, role));
         }
 
-        var key = Encoding.ASCII.GetBytes(AuthorizationConstants.JWT_SECRET_KEY);
         var tokenDescriptor = new SecurityTokenDescriptor
         {
-            Subject = new ClaimsIdentity(claims.ToArray()),
-            Expires = DateTime.UtcNow.AddHours(1),
-            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+            Subject            = new ClaimsIdentity(claims),
+            Expires            = DateTime.UtcNow.AddHours(1),
+            Issuer             = "FunctionalTests",
+            Audience           = "eShopOnWebAPI",
+            SigningCredentials = new SigningCredentials(key, AllowedAlgorithm),
         };
-        var tokenHandler = new JwtSecurityTokenHandler();
-        var token = tokenHandler.CreateToken(tokenDescriptor);
-        return tokenHandler.WriteToken(token);
+
+        var handler = new JwtSecurityTokenHandler();
+        var token   = handler.CreateToken(tokenDescriptor);
+        return handler.WriteToken(token);
     }
 }

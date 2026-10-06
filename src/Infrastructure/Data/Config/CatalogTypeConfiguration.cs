@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.eShopWeb.ApplicationCore.Entities;
 
@@ -11,8 +11,8 @@ public class CatalogTypeConfiguration : IEntityTypeConfiguration<CatalogType>
         builder.HasKey(ci => ci.Id);
 
         builder.Property(ci => ci.Id)
-           .UseHiLo("catalog_type_hilo")
-           .IsRequired();
+            .UseHiLo("catalog_type_hilo")
+            .IsRequired();
 
         builder.Property(cb => cb.Type)
             .IsRequired()

@@ -1,27 +1,30 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 
 namespace Microsoft.eShopWeb.FunctionalTests.Web;
 
 public static class WebPageHelpers
 {
-    public static string TokenTag = "__RequestVerificationToken";
+    public static readonly string TokenTag = "__RequestVerificationToken";
 
-    public static string GetRequestVerificationToken(string input)
-    {
-        string regexpression = @"name=""__RequestVerificationToken"" type=""hidden"" value=""([-A-Za-z0-9+=/\\_]+?)""";
-        return RegexSearch(regexpression, input);
-    }
+    // Pre-compiled regexes for performance and correctness.
+    private static readonly Regex TokenRegex = new(
+        @"name=""__RequestVerificationToken"" type=""hidden"" value=""([-A-Za-z0-9+=/\\_]+?)""",
+        RegexOptions.Compiled);
 
-    public static string GetId(string input)
-    {
-        string regexpression = @"name=""Items\[0\].Id"" value=""(\d)""";
-        return RegexSearch(regexpression, input);
-    }
+    private static readonly Regex IdRegex = new(
+        @"name=""Items\[0\].Id"" value=""(\d+)""",
+        RegexOptions.Compiled);
 
-    private static string RegexSearch(string regexpression, string input)
+    public static string GetRequestVerificationToken(string input) =>
+        RegexSearch(TokenRegex, input);
+
+    public static string GetId(string input) =>
+        RegexSearch(IdRegex, input);
+
+    private static string RegexSearch(Regex regex, string input)
     {
-        var regex = new Regex(regexpression);
         var match = regex.Match(input);
-        return match!.Groups!.Values!.LastOrDefault()!.Value;
+        // Return empty string rather than throw if not found; callers assert on length.
+        return match.Groups.Values.LastOrDefault()?.Value ?? string.Empty;
     }
 }

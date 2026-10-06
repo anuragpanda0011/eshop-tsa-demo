@@ -1,15 +1,17 @@
-﻿using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.AspNetCore.Components.Forms;
 
 namespace BlazorAdmin.Shared;
 
 /// <summary>
-/// This is needed until 5.0 ships with native support
-/// https://www.pragimtech.com/blog/blazor/inputselect-does-not-support-system.int32/
+/// Extends <see cref="InputSelect{TValue}"/> to support <see cref="int"/>
+/// binding, which was not natively supported prior to .NET 5.
 /// </summary>
-/// <typeparam name="TValue"></typeparam>
+/// <typeparam name="TValue">The bound value type.</typeparam>
 public class CustomInputSelect<TValue> : InputSelect<TValue>
 {
-    protected override bool TryParseValueFromString(string value, out TValue result,
+    protected override bool TryParseValueFromString(
+        string value,
+        out TValue result,
         out string validationErrorMessage)
     {
         if (typeof(TValue) == typeof(int))
@@ -20,18 +22,13 @@ public class CustomInputSelect<TValue> : InputSelect<TValue>
                 validationErrorMessage = null;
                 return true;
             }
-            else
-            {
-                result = default;
-                validationErrorMessage =
-                    $"The selected value {value} is not a valid number.";
-                return false;
-            }
+
+            result = default;
+            validationErrorMessage =
+                $"The selected value '{value}' is not a valid number.";
+            return false;
         }
-        else
-        {
-            return base.TryParseValueFromString(value, out result,
-                out validationErrorMessage);
-        }
+
+        return base.TryParseValueFromString(value, out result, out validationErrorMessage);
     }
 }

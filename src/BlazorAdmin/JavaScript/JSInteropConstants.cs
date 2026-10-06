@@ -1,4 +1,4 @@
-﻿namespace BlazorAdmin.JavaScript;
+namespace BlazorAdmin.JavaScript;
 
 public static class JSInteropConstants
 {

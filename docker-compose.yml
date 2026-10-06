@@ -1,5 +1,13 @@
 version: '3.4'
 
+# -----------------------------------------------------------------------
+# LOCAL DEVELOPMENT ONLY
+# The SA_PASSWORD below is a local-dev-only secret used exclusively with
+# the ephemeral Docker SQL Server container.  It is NOT used in any
+# shared or production environment.  Production secrets are managed
+# exclusively through Azure Key Vault accessed via Managed Identity.
+# -----------------------------------------------------------------------
+
 services:
   eshopwebmvc:
     image: ${DOCKER_REGISTRY-}eshopwebmvc
@@ -7,19 +15,29 @@ services:
       context: .
       dockerfile: src/Web/Dockerfile
     depends_on:
-      - "sqlserver"
+      - sqlserver
+      - redis
+
   eshoppublicapi:
     image: ${DOCKER_REGISTRY-}eshoppublicapi
     build:
       context: .
       dockerfile: src/PublicApi/Dockerfile
     depends_on:
-      - "sqlserver"
+      - sqlserver
+      - redis
+
   sqlserver:
     image: mcr.microsoft.com/azure-sql-edge
     ports:
       - "1433:1433"
     environment:
-      - SA_PASSWORD=@someThingComplicated1234
+      # LOCAL DEV ONLY — never reuse this password outside local Docker.
+      - SA_PASSWORD=${SA_PASSWORD:-@someThingComplicated1234_LocalDev}
       - ACCEPT_EULA=Y
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --save "" --appendonly no

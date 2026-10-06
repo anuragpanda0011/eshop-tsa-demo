@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Encodings.Web;
@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Identity.UI.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.eShopWeb.Infrastructure.Identity;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.eShopWeb.Web.Areas.Identity.Pages.Account;
@@ -21,17 +22,20 @@ public class RegisterModel : PageModel
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly ILogger<RegisterModel> _logger;
     private readonly IEmailSender _emailSender;
+    private readonly IDistributedCache _distributedCache;
 
     public RegisterModel(
         UserManager<ApplicationUser> userManager,
         SignInManager<ApplicationUser> signInManager,
         ILogger<RegisterModel> logger,
-        IEmailSender emailSender)
+        IEmailSender emailSender,
+        IDistributedCache distributedCache)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _logger = logger;
         _emailSender = emailSender;
+        _distributedCache = distributedCache;
     }
 
     [BindProperty]
@@ -66,13 +70,32 @@ public class RegisterModel : PageModel
     public async Task<IActionResult> OnPostAsync(string? returnUrl = null)
     {
         returnUrl = returnUrl ?? Url.Content("~/");
+
+        // Rate-limit registration attempts by IP
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var rateLimitKey = $"register_ratelimit:{HashHelper.HashKey(ipAddress)}";
+        var attemptBytes = await _distributedCache.GetAsync(rateLimitKey);
+        int attempts = attemptBytes != null ? int.Parse(System.Text.Encoding.UTF8.GetString(attemptBytes)) : 0;
+
+        if (attempts >= 5)
+        {
+            _logger.LogWarning("Register rate limit exceeded. IP={IP} TraceId={TraceId}",
+                ipAddress, HttpContext.TraceIdentifier);
+            ModelState.AddModelError(string.Empty, "Too many registration attempts. Please try again later.");
+            return Page();
+        }
+
         if (ModelState.IsValid)
         {
             var user = new ApplicationUser { UserName = Input?.Email, Email = Input?.Email };
             var result = await _userManager.CreateAsync(user, Input?.Password!);
             if (result.Succeeded)
             {
-                _logger.LogInformation("User created a new account with password.");
+                _logger.LogInformation("User created a new account with password. TraceId={TraceId}",
+                    HttpContext.TraceIdentifier);
+
+                // Reset rate limit on success
+                await _distributedCache.RemoveAsync(rateLimitKey);
 
                 var code = await _userManager.GenerateEmailConfirmationTokenAsync(user);
                 var callbackUrl = Url.Page(
@@ -88,6 +111,17 @@ public class RegisterModel : PageModel
                 await _signInManager.SignInAsync(user, isPersistent: false);
                 return LocalRedirect(returnUrl);
             }
+
+            // Increment rate-limit counter on failure
+            attempts++;
+            await _distributedCache.SetAsync(
+                rateLimitKey,
+                System.Text.Encoding.UTF8.GetBytes(attempts.ToString()),
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = System.TimeSpan.FromMinutes(30)
+                });
+
             foreach (var error in result.Errors)
             {
                 ModelState.AddModelError(string.Empty, error.Description);

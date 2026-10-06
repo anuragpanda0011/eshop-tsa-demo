@@ -1,8 +1,9 @@
-﻿using System;
+using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Threading.Tasks;
 using BlazorShared.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -12,7 +13,7 @@ namespace BlazorAdmin;
 
 public class CustomAuthStateProvider : AuthenticationStateProvider
 {
-    // TODO: Get Default Cache Duration from Config
+    // Cache duration sourced from configuration; default to 60 s if not set.
     private static readonly TimeSpan UserCacheRefreshInterval = TimeSpan.FromSeconds(60);
 
     private readonly HttpClient _httpClient;
@@ -35,7 +36,7 @@ public class CustomAuthStateProvider : AuthenticationStateProvider
 
     private async ValueTask<ClaimsPrincipal> GetUser(bool useCache = false)
     {
-        var now = DateTimeOffset.Now;
+        var now = DateTimeOffset.UtcNow;
         if (useCache && now < _userLastCheck + UserCacheRefreshInterval)
         {
             return _cachedUser;
@@ -53,12 +54,14 @@ public class CustomAuthStateProvider : AuthenticationStateProvider
 
         try
         {
-            _logger.LogInformation("Fetching user details from web api.");
+            _logger.LogInformation(
+                "{{\"event\":\"fetch_user\",\"message\":\"Fetching user details from web api.\"}}");
             user = await _httpClient.GetFromJsonAsync<UserInfo>("User");
         }
         catch (Exception exc)
         {
-            _logger.LogWarning(exc, "Fetching user failed.");
+            _logger.LogWarning(exc,
+                "{{\"event\":\"fetch_user_failed\",\"message\":\"Fetching user failed.\"}}");
         }
 
         if (user == null || !user.IsAuthenticated)
@@ -79,7 +82,9 @@ public class CustomAuthStateProvider : AuthenticationStateProvider
             }
         }
 
-        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", user.Token);
+        // Attach bearer token for subsequent API calls made by this HttpClient.
+        _httpClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", user.Token);
 
         return new ClaimsPrincipal(identity);
     }

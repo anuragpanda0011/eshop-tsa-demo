@@ -1,0 +1,9 @@
+# Copy this file to backend.hcl and fill in your values.
+# backend.hcl must NOT be committed to source control — add it to .gitignore.
+#
+# Usage: terraform init -backend-config=backend.hcl
+
+resource_group_name  = "rg-eshop-tfstate"
+storage_account_name = "steshoptfstateprod"
+container_name       = "tfstate"
+key                  = "eshop.prod.tfstate"

@@ -1,4 +1,4 @@
-﻿namespace BlazorShared.Models;
+namespace BlazorShared.Models;
 
 public class DeleteCatalogItemResponse
 {
