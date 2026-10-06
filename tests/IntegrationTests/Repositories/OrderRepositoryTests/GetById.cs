@@ -1,4 +1,4 @@
-﻿using System.Linq;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
@@ -15,6 +15,7 @@ public class GetById
     private readonly EfRepository<Order> _orderRepository;
     private OrderBuilder OrderBuilder { get; } = new OrderBuilder();
     private readonly ITestOutputHelper _output;
+
     public GetById(ITestOutputHelper output)
     {
         _output = output;
@@ -37,9 +38,9 @@ public class GetById
         var orderFromRepo = await _orderRepository.GetByIdAsync(orderId);
         Assert.Equal(OrderBuilder.TestBuyerId, orderFromRepo.BuyerId);
 
-        // Note: Using InMemoryDatabase OrderItems is available. Will be null if using SQL DB.
-        // Use the OrderWithItemsByIdSpec instead of just GetById to get the full aggregate
+        // Note: Using InMemoryDatabase OrderItems is available.
+        // Will be null if using SQL DB without the OrderWithItemsByIdSpec.
         var firstItem = orderFromRepo.OrderItems.FirstOrDefault();
-        Assert.Equal(OrderBuilder.TestUnits, firstItem.Units);
+        Assert.Equal(OrderBuilder.TestUnits, firstItem!.Units);
     }
 }

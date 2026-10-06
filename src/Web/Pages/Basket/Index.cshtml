@@ -17,10 +17,11 @@
             <article class="esh-basket-titles row">
                 <br />
                 <section class="esh-basket-title col-xs-3">Product</section>
-                <section class="esh-basket-title col-xs-3 hidden-lg-down"></section>
+                <section class="esh-basket-title col-xs-2 hidden-lg-down"></section>
                 <section class="esh-basket-title col-xs-2">Price</section>
                 <section class="esh-basket-title col-xs-2">Quantity</section>
                 <section class="esh-basket-title col-xs-2">Cost</section>
+                <section class="esh-basket-title col-xs-1"></section>
             </article>
             <div class="esh-catalog-items row">
                 <div asp-validation-summary="All" class="text-danger"></div>
@@ -29,7 +30,7 @@
                     var item = Model.BasketModel.Items[i];
                     <article class="esh-basket-items row">
                         <div>
-                            <section class="esh-basket-item esh-basket-item--middle col-lg-3 hidden-lg-down">
+                            <section class="esh-basket-item esh-basket-item--middle col-lg-2 hidden-lg-down">
                                 <img class="esh-basket-image" src="@item.PictureUrl" />
                             </section>
                             <section class="esh-basket-item esh-basket-item--middle col-xs-3">@item.ProductName</section>
@@ -39,6 +40,13 @@
                                 <input type="number" class="esh-basket-input" min="0" name="@("Items[" + i + "].Quantity")" value="@item.Quantity" />
                             </section>
                             <section class="esh-basket-item esh-basket-item--middle esh-basket-item--mark col-xs-2">$ @Math.Round(item.Quantity * item.UnitPrice, 2).ToString("N2")</section>
+                            <section class="esh-basket-item esh-basket-item--middle col-xs-1">
+                                <button class="btn esh-basket-remove" type="submit" asp-page-handler="Remove"
+                                        name="id" value="@item.Id"
+                                        title="Remove @item.ProductName from the basket">
+                                    [ Remove ]
+                                </button>
+                            </section>
                         </div>
                         <div class="row">
 

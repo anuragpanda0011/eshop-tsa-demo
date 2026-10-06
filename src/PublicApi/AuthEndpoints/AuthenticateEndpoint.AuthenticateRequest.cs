@@ -1,7 +1,12 @@
-﻿namespace Microsoft.eShopWeb.PublicApi.AuthEndpoints;
+using System.ComponentModel.DataAnnotations;
+
+namespace Microsoft.eShopWeb.PublicApi.AuthEndpoints;
 
 public class AuthenticateRequest : BaseRequest
 {
-    public string Username { get; set; }
-    public string Password { get; set; }
+    [Required]
+    public string Username { get; set; } = string.Empty;
+
+    [Required]
+    public string Password { get; set; } = string.Empty;
 }

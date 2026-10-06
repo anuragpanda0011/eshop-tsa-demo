@@ -1,4 +1,4 @@
-﻿namespace BlazorShared.Authorization;
+namespace BlazorShared.Authorization;
 
 public static class Constants
 {

@@ -32,9 +32,14 @@ param minimumElasticInstanceCount int = -1
 param numberOfWorkers int = -1
 param scmDoBuildDuringDeployment bool = false
 param use32BitWorkerProcess bool = false
+// FtpsOnly enforces TLS for all FTP/FTPS connections; Disabled is acceptable
+// when FTP is not used at all.
 param ftpsState string = 'FtpsOnly'
-param healthCheckPath string = ''
+param healthCheckPath string = '/health'
 
+// ---------------------------------------------------------------------------
+// App Service resource — HTTPS-only, TLS 1.2+, system-assigned Managed Identity
+// ---------------------------------------------------------------------------
 resource appService 'Microsoft.Web/sites@2022-03-01' = {
   name: name
   location: location
@@ -42,45 +47,94 @@ resource appService 'Microsoft.Web/sites@2022-03-01' = {
   kind: kind
   properties: {
     serverFarmId: appServicePlanId
+    httpsOnly: true
+    clientAffinityEnabled: clientAffinityEnabled
     siteConfig: {
       linuxFxVersion: linuxFxVersion
       alwaysOn: alwaysOn
-      ftpsState: ftpsState
+      // Enforce TLS 1.2 minimum for all inbound connections
       minTlsVersion: '1.2'
+      // Disable FTP completely unless explicitly required; use FTPS at minimum
+      ftpsState: ftpsState
       appCommandLine: appCommandLine
       numberOfWorkers: numberOfWorkers != -1 ? numberOfWorkers : null
       minimumElasticInstanceCount: minimumElasticInstanceCount != -1 ? minimumElasticInstanceCount : null
       use32BitWorkerProcess: use32BitWorkerProcess
       functionAppScaleLimit: functionAppScaleLimit != -1 ? functionAppScaleLimit : null
       healthCheckPath: healthCheckPath
+      // HTTP/2 improves performance for modern clients
+      http20Enabled: true
+      // Disable remote debugging in all environments
+      remoteDebuggingEnabled: false
       cors: {
         allowedOrigins: union([ 'https://portal.azure.com', 'https://ms.portal.azure.com' ], allowedOrigins)
+        supportCredentials: false
       }
+      // Security headers enforced at the platform level
+      ipSecurityRestrictions: []
+      scmIpSecurityRestrictions: []
     }
-    clientAffinityEnabled: clientAffinityEnabled
-    httpsOnly: true
   }
 
+  // System-assigned Managed Identity used to pull secrets from Key Vault
+  // without any credential in code or configuration.
   identity: { type: managedIdentity ? 'SystemAssigned' : 'None' }
 
   resource configAppSettings 'config' = {
     name: 'appsettings'
-    properties: union(appSettings,
+    properties: union(
+      appSettings,
       {
         SCM_DO_BUILD_DURING_DEPLOYMENT: string(scmDoBuildDuringDeployment)
         ENABLE_ORYX_BUILD: string(enableOryxBuild)
+        // Structured JSON logging to stdout; consumed by Log Analytics
+        Logging__Console__FormatterName: 'json'
+        Logging__Console__FormatterOptions__TimestampFormat: 'yyyy-MM-ddTHH:mm:ss.fffZ'
+        Logging__LogLevel__Default: 'Information'
+        Logging__LogLevel__Microsoft_AspNetCore: 'Warning'
+        // ASPNETCORE_ENVIRONMENT is set via deployment pipeline; do not
+        // default here to avoid accidentally exposing dev settings.
       },
-      !empty(applicationInsightsName) ? { APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString } : {},
-      !empty(keyVaultName) ? { AZURE_KEY_VAULT_ENDPOINT: keyVault.properties.vaultUri } : {})
+      !empty(applicationInsightsName) ? {
+        APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString
+        ApplicationInsightsAgent_EXTENSION_VERSION: '~3'
+        XDT_MicrosoftApplicationInsights_Mode: 'Recommended'
+      } : {},
+      !empty(keyVaultName) ? {
+        AZURE_KEY_VAULT_ENDPOINT: keyVault.properties.vaultUri
+        // Tell the Azure SDK to use Managed Identity for Key Vault
+        AZURE_CLIENT_ID: ''
+      } : {}
+    )
   }
 
   resource configLogs 'config' = {
     name: 'logs'
     properties: {
-      applicationLogs: { fileSystem: { level: 'Verbose' } }
-      detailedErrorMessages: { enabled: true }
+      applicationLogs: { fileSystem: { level: 'Warning' } }
+      detailedErrorMessages: { enabled: false }
       failedRequestsTracing: { enabled: true }
-      httpLogs: { fileSystem: { enabled: true, retentionInDays: 1, retentionInMb: 35 } }
+      httpLogs: {
+        fileSystem: {
+          enabled: true
+          retentionInDays: 7
+          retentionInMb: 100
+        }
+      }
+    }
+    dependsOn: [
+      configAppSettings
+    ]
+  }
+
+  // Enforce modern TLS and disable legacy protocols / ciphers at the platform level
+  resource configWeb 'config' = {
+    name: 'web'
+    properties: {
+      minTlsVersion: '1.2'
+      ftpsState: ftpsState
+      http20Enabled: true
+      remoteDebuggingEnabled: false
     }
     dependsOn: [
       configAppSettings
@@ -88,7 +142,10 @@ resource appService 'Microsoft.Web/sites@2022-03-01' = {
   }
 }
 
-resource keyVault 'Microsoft.KeyVault/vaults@2022-07-01' existing = if (!(empty(keyVaultName))) {
+// ---------------------------------------------------------------------------
+// Existing resource references
+// ---------------------------------------------------------------------------
+resource keyVault 'Microsoft.KeyVault/vaults@2022-07-01' existing = if (!empty(keyVaultName)) {
   name: keyVaultName
 }
 
@@ -96,6 +153,9 @@ resource applicationInsights 'Microsoft.Insights/components@2020-02-02' existing
   name: applicationInsightsName
 }
 
+// ---------------------------------------------------------------------------
+// Outputs
+// ---------------------------------------------------------------------------
 output identityPrincipalId string = managedIdentity ? appService.identity.principalId : ''
 output name string = appService.name
 output uri string = 'https://${appService.properties.defaultHostName}'

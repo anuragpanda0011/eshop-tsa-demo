@@ -1,4 +1,9 @@
-﻿using System.Security.Claims;
+using System;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
@@ -6,18 +11,21 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.eShopWeb.Infrastructure.Identity;
 using Microsoft.eShopWeb.Web.Configuration;
-using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.eShopWeb.Web.Areas.Identity.Pages.Account;
 
-//TODO : replace IMemoryCache by distributed cache if you are in multi-host scenario
 public class LogoutModel : PageModel
 {
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly ILogger<LogoutModel> _logger;
-    private readonly IMemoryCache _cache;
+    private readonly IDistributedCache _cache;
 
-    public LogoutModel(SignInManager<ApplicationUser> signInManager, ILogger<LogoutModel> logger, IMemoryCache cache)
+    public LogoutModel(
+        SignInManager<ApplicationUser> signInManager,
+        ILogger<LogoutModel> logger,
+        IDistributedCache cache)
     {
         _signInManager = signInManager;
         _logger = logger;
@@ -32,21 +40,40 @@ public class LogoutModel : PageModel
     {
         await _signInManager.SignOutAsync();
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-        var userId = _signInManager.Context.User.Claims.First(c => c.Type == ClaimTypes.Name);
-        var identityKey = _signInManager.Context.Request.Cookies[ConfigureCookieSettings.IdentifierCookieName];
-        _cache.Set($"{userId.Value}:{identityKey}", identityKey, new MemoryCacheEntryOptions
-        {
-            AbsoluteExpiration = DateTime.Now.AddMinutes(ConfigureCookieSettings.ValidityMinutesPeriod)
-        });
 
-        _logger.LogInformation("User logged out.");
+        var userId = _signInManager.Context.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name);
+        var identityKey = _signInManager.Context.Request.Cookies[ConfigureCookieSettings.IdentifierCookieName];
+
+        if (userId != null && identityKey != null)
+        {
+            // Use SHA-256 hash of the cache key to avoid user-supplied strings as raw keys
+            var rawKey = $"{userId.Value}:{identityKey}";
+            var hashedKey = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    Encoding.UTF8.GetBytes(rawKey))).ToLowerInvariant();
+
+            var cacheOptions = new DistributedCacheEntryOptions
+            {
+                AbsoluteExpiration = DateTimeOffset.UtcNow.AddMinutes(
+                    ConfigureCookieSettings.ValidityMinutesPeriod)
+            };
+
+            await _cache.SetStringAsync(
+                hashedKey,
+                JsonSerializer.Serialize(new { revokedAt = DateTimeOffset.UtcNow }),
+                cacheOptions);
+        }
+
+        _logger.LogInformation(
+            "User logged out. UserId={UserId} TraceId={TraceId}",
+            userId?.Value ?? "unknown",
+            HttpContext.TraceIdentifier);
+
         if (returnUrl != null)
         {
             return LocalRedirect(returnUrl);
         }
-        else
-        {
-            return RedirectToPage("/Index");
-        }
+
+        return RedirectToPage("/Index");
     }
 }

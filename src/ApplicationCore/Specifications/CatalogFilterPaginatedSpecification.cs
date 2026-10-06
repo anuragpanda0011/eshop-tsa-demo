@@ -1,4 +1,4 @@
-﻿using Ardalis.Specification;
+using Ardalis.Specification;
 using Microsoft.eShopWeb.ApplicationCore.Entities;
 
 namespace Microsoft.eShopWeb.ApplicationCore.Specifications;
@@ -14,7 +14,8 @@ public class CatalogFilterPaginatedSpecification : Specification<CatalogItem>
         }
         Query
             .Where(i => (!brandId.HasValue || i.CatalogBrandId == brandId) &&
-            (!typeId.HasValue || i.CatalogTypeId == typeId))
-            .Skip(skip).Take(take);
+                        (!typeId.HasValue  || i.CatalogTypeId  == typeId))
+            .Skip(skip)
+            .Take(take);
     }
 }

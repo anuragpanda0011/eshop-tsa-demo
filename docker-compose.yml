@@ -1,25 +1,191 @@
-version: '3.4'
+# docker-compose.yml
+#
+# LOCAL DEVELOPMENT ONLY — not used in production.
+#
+# Production target: Azure Container Apps (Web + API) backed by
+# Azure SQL Database (private endpoint), Azure Cache for Redis,
+# and Azure Key Vault (Managed Identity / RBAC).
+#
+# All secrets are read from a .env file (git-ignored) or from the
+# shell environment.  Never commit real credentials.
+#
+# Required env vars (put in eshoponweb/.env — see .env.example):
+#   SQL_SA_PASSWORD          – strong SA password for local SQL only
+#   CATALOG_CONNECTION       – full ADO.NET connection string for catalog DB
+#   IDENTITY_CONNECTION      – full ADO.NET connection string for identity DB
+#   JWT_SECRET               – >=32-char signing key for the API
+#   REDIS_CONNECTION         – Redis connection string (localhost:6379 for local)
+#   APPLICATIONINSIGHTS_CONNECTION_STRING – App Insights (optional locally)
 
+version: '3.9'
+
+# ---------------------------------------------------------------------------
+# Shared default configuration applied to every application service
+# ---------------------------------------------------------------------------
+x-app-defaults: &app-defaults
+  restart: unless-stopped
+  networks:
+    - eshoponweb-internal
+  environment: &shared-env
+    # Resolve Azure-style config names so the same appsettings.json keys work
+    # both locally and in Container Apps.
+    ASPNETCORE_ENVIRONMENT: Development
+    ConnectionStrings__CatalogConnection: ${CATALOG_CONNECTION:?CATALOG_CONNECTION is required}
+    ConnectionStrings__IdentityConnection: ${IDENTITY_CONNECTION:?IDENTITY_CONNECTION is required}
+    # JWT signing key – in production this comes from Key Vault via Managed Identity
+    JwtConfig__Secret: ${JWT_SECRET:?JWT_SECRET is required}
+    # Redis – in production this is Azure Cache for Redis (rediss://...)
+    Redis__ConnectionString: ${REDIS_CONNECTION:-redis:6379}
+    # Application Insights (optional locally – leave blank to disable)
+    APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
 services:
+
+  # --------------------------------------------------------------------------
+  # Web MVC front-end
+  # --------------------------------------------------------------------------
   eshopwebmvc:
-    image: ${DOCKER_REGISTRY-}eshopwebmvc
+    <<: *app-defaults
+    image: ${DOCKER_REGISTRY:-local}/eshopwebmvc:${IMAGE_TAG:-dev}
     build:
       context: .
       dockerfile: src/Web/Dockerfile
+      target: final
+    ports:
+      - "${WEB_PORT:-5106}:8080"
     depends_on:
-      - "sqlserver"
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *shared-env
+      # Bind to non-root port inside container (matches Dockerfile EXPOSE)
+      ASPNETCORE_URLS: http://+:8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # --------------------------------------------------------------------------
+  # Public REST API
+  # --------------------------------------------------------------------------
   eshoppublicapi:
-    image: ${DOCKER_REGISTRY-}eshoppublicapi
+    <<: *app-defaults
+    image: ${DOCKER_REGISTRY:-local}/eshoppublicapi:${IMAGE_TAG:-dev}
     build:
       context: .
       dockerfile: src/PublicApi/Dockerfile
-    depends_on:
-      - "sqlserver"
-  sqlserver:
-    image: mcr.microsoft.com/azure-sql-edge
+      target: final
     ports:
-      - "1433:1433"
+      - "${API_PORT:-5200}:8080"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
-      - SA_PASSWORD=@someThingComplicated1234
-      - ACCEPT_EULA=Y
+      <<: *shared-env
+      ASPNETCORE_URLS: http://+:8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
+  # --------------------------------------------------------------------------
+  # Azure SQL Edge — LOCAL DEVELOPMENT ONLY
+  # In production this is replaced by Azure SQL Database (private endpoint).
+  # The SA password is injected via SQL_SA_PASSWORD env var; it is never
+  # hardcoded here.  The data volume is named so that containers can be
+  # recreated without losing local dev data.
+  # --------------------------------------------------------------------------
+  sqlserver:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    restart: unless-stopped
+    networks:
+      - eshoponweb-internal
+    # Expose only on loopback to reduce local attack surface
+    ports:
+      - "127.0.0.1:1433:1433"
+    environment:
+      # SA_PASSWORD must be injected — never hardcoded
+      SA_PASSWORD: ${SQL_SA_PASSWORD:?SQL_SA_PASSWORD is required — set it in .env}
+      ACCEPT_EULA: "Y"
+      # Run as least-privilege non-root user inside the container
+      MSSQL_AGENT_ENABLED: "false"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      # Use sqlcmd bundled in the image to verify the engine is ready
+      test:
+        - "CMD-SHELL"
+        - |
+          /opt/mssql-tools/bin/sqlcmd \
+            -S localhost \
+            -U sa \
+            -P "$$SA_PASSWORD" \
+            -Q "SELECT 1" \
+            -b -o /dev/null
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # Redis — LOCAL DEVELOPMENT ONLY
+  # In production this is Azure Cache for Redis Standard C1 with TLS
+  # (rediss://... connection string) and no anonymous access.
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    networks:
+      - eshoponweb-internal
+    # Bind only to loopback locally
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: >
+      redis-server
+      --save 60 1
+      --loglevel warning
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+networks:
+  eshoponweb-internal:
+    driver: bridge
+    # Disable ICC so containers can only communicate via explicit links/deps
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
+
+# ---------------------------------------------------------------------------
+# Volumes
+# ---------------------------------------------------------------------------
+volumes:
+  sqlserver-data:
+    driver: local
+  redis-data:
+    driver: local

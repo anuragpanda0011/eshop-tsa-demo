@@ -1,8 +1,123 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/wbreza/azure-dev/main/schemas/v1.0/azure.yaml.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
 
 name: eShopOnWeb
+
+metadata:
+  template: eShopOnWeb@1.0.0
+
+infra:
+  provider: bicep
+  path: infra
+  module: main
+
+pipeline:
+  provider: github
+
 services:
   web:
     project: ./src/Web
     language: csharp
-    host: appservice
+    host: containerapp
+    docker:
+      path: ./src/Web/Dockerfile
+      context: .
+    env:
+      ASPNETCORE_ENVIRONMENT: Production
+      APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING}
+      AZURE_KEY_VAULT_ENDPOINT: ${AZURE_KEY_VAULT_ENDPOINT}
+      AZURE_REDIS_CONNECTION_STRING: ${AZURE_REDIS_CONNECTION_STRING}
+      CATALOG_CONNECTION_STRING: ${CATALOG_CONNECTION_STRING}
+      IDENTITY_CONNECTION_STRING: ${IDENTITY_CONNECTION_STRING}
+
+  api:
+    project: ./src/PublicApi
+    language: csharp
+    host: containerapp
+    docker:
+      path: ./src/PublicApi/Dockerfile
+      context: .
+    env:
+      ASPNETCORE_ENVIRONMENT: Production
+      APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING}
+      AZURE_KEY_VAULT_ENDPOINT: ${AZURE_KEY_VAULT_ENDPOINT}
+      AZURE_REDIS_CONNECTION_STRING: ${AZURE_REDIS_CONNECTION_STRING}
+      CATALOG_CONNECTION_STRING: ${CATALOG_CONNECTION_STRING}
+      IDENTITY_CONNECTION_STRING: ${IDENTITY_CONNECTION_STRING}
+      JWT_AUTHORITY: ${JWT_AUTHORITY}
+      JWT_AUDIENCE: ${JWT_AUDIENCE}
+
+  blazoradmin:
+    project: ./src/BlazorAdmin
+    language: csharp
+    host: staticwebapp
+    dist: wwwroot
+    env:
+      AZURE_API_BASE_URL: ${AZURE_API_BASE_URL}
+
+hooks:
+  preprovision:
+    shell: sh
+    run: |
+      echo "Validating required environment variables..."
+      : "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}"
+      : "${AZURE_LOCATION:?AZURE_LOCATION is required}"
+      : "${AZURE_ENV_NAME:?AZURE_ENV_NAME is required}"
+    continueOnError: false
+    interactive: false
+
+  postprovision:
+    shell: sh
+    run: |
+      echo "Storing runtime configuration in Key Vault..."
+      az keyvault secret set \
+        --vault-name "${AZURE_KEY_VAULT_NAME}" \
+        --name "CatalogConnectionString" \
+        --value "${CATALOG_CONNECTION_STRING}" \
+        --output none
+      az keyvault secret set \
+        --vault-name "${AZURE_KEY_VAULT_NAME}" \
+        --name "IdentityConnectionString" \
+        --value "${IDENTITY_CONNECTION_STRING}" \
+        --output none
+      az keyvault secret set \
+        --vault-name "${AZURE_KEY_VAULT_NAME}" \
+        --name "RedisConnectionString" \
+        --value "${AZURE_REDIS_CONNECTION_STRING}" \
+        --output none
+      az keyvault secret set \
+        --vault-name "${AZURE_KEY_VAULT_NAME}" \
+        --name "ApplicationInsightsConnectionString" \
+        --value "${APPLICATIONINSIGHTS_CONNECTION_STRING}" \
+        --output none
+      echo "Post-provision configuration complete."
+    continueOnError: false
+    interactive: false
+
+  predeploy:
+    shell: sh
+    run: |
+      echo "Running pre-deployment health checks..."
+      az acr check-health \
+        --name "${AZURE_CONTAINER_REGISTRY_NAME}" \
+        --ignore-errors \
+        --output table || true
+    continueOnError: true
+    interactive: false
+
+  postdeploy:
+    shell: sh
+    run: |
+      echo "Verifying container app deployments..."
+      az containerapp show \
+        --name "${WEB_CONTAINER_APP_NAME}" \
+        --resource-group "${AZURE_RESOURCE_GROUP}" \
+        --query "properties.latestRevisionFqdn" \
+        --output tsv || true
+      az containerapp show \
+        --name "${API_CONTAINER_APP_NAME}" \
+        --resource-group "${AZURE_RESOURCE_GROUP}" \
+        --query "properties.latestRevisionFqdn" \
+        --output tsv || true
+      echo "Post-deploy verification complete."
+    continueOnError: true
+    interactive: false

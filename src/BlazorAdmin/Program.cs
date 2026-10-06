@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net.Http;
 using System.Threading.Tasks;
 using BlazorAdmin;
@@ -20,7 +20,12 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 var configSection = builder.Configuration.GetRequiredSection(BaseUrlConfiguration.CONFIG_NAME);
 builder.Services.Configure<BaseUrlConfiguration>(configSection);
 
-builder.Services.AddScoped(sp => new HttpClient() { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+// The base address is the hosting origin; all API calls go through the same host
+// (proxied to the backend Container App via Azure Front Door / API Management).
+builder.Services.AddScoped(sp => new HttpClient
+{
+    BaseAddress = new Uri(builder.HostEnvironment.BaseAddress)
+});
 
 builder.Services.AddScoped<ToastService>();
 builder.Services.AddScoped<HttpService>();
@@ -29,7 +34,8 @@ builder.Services.AddBlazoredLocalStorage();
 
 builder.Services.AddAuthorizationCore();
 builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthStateProvider>();
-builder.Services.AddScoped(sp => (CustomAuthStateProvider)sp.GetRequiredService<AuthenticationStateProvider>());
+builder.Services.AddScoped(sp =>
+    (CustomAuthStateProvider)sp.GetRequiredService<AuthenticationStateProvider>());
 
 builder.Services.AddBlazorServices();
 
@@ -39,6 +45,8 @@ await ClearLocalStorageCache(builder.Services);
 
 await builder.Build().RunAsync();
 
+// Clear stale lookup caches on every cold start so the admin UI never shows
+// stale brand/type data after a deployment.
 static async Task ClearLocalStorageCache(IServiceCollection services)
 {
     var sp = services.BuildServiceProvider();

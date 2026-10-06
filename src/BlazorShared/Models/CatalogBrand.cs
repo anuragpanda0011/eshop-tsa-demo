@@ -1,4 +1,4 @@
-﻿using BlazorShared.Attributes;
+using BlazorShared.Attributes;
 
 namespace BlazorShared.Models;
 

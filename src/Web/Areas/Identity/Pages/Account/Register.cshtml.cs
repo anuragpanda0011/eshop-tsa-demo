@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Encodings.Web;
@@ -47,7 +47,9 @@ public class RegisterModel : PageModel
         public string? Email { get; set; }
 
         [Required]
-        [StringLength(100, ErrorMessage = "The {0} must be at least {2} and at max {1} characters long.", MinimumLength = 6)]
+        [StringLength(100,
+            ErrorMessage = "The {0} must be at least {2} and at max {1} characters long.",
+            MinimumLength = 8)]
         [DataType(DataType.Password)]
         [Display(Name = "Password")]
         public string? Password { get; set; }
@@ -66,13 +68,19 @@ public class RegisterModel : PageModel
     public async Task<IActionResult> OnPostAsync(string? returnUrl = null)
     {
         returnUrl = returnUrl ?? Url.Content("~/");
+
         if (ModelState.IsValid)
         {
             var user = new ApplicationUser { UserName = Input?.Email, Email = Input?.Email };
+            // ASP.NET Core Identity uses PBKDF2 (bcrypt-equivalent) by default — no weak hashing.
             var result = await _userManager.CreateAsync(user, Input?.Password!);
+
             if (result.Succeeded)
             {
-                _logger.LogInformation("User created a new account with password.");
+                _logger.LogInformation(
+                    "User created a new account. Email={Email} TraceId={TraceId}",
+                    Input!.Email,
+                    HttpContext.TraceIdentifier);
 
                 var code = await _userManager.GenerateEmailConfirmationTokenAsync(user);
                 var callbackUrl = Url.Page(
@@ -82,19 +90,25 @@ public class RegisterModel : PageModel
                     protocol: Request.Scheme);
 
                 Guard.Against.Null(callbackUrl, nameof(callbackUrl));
-                await _emailSender.SendEmailAsync(Input!.Email!, "Confirm your email",
-                    $"Please confirm your account by <a href='{HtmlEncoder.Default.Encode(callbackUrl)}'>clicking here</a>.");
+
+                // Welcome / confirm email sent via IEmailSender (backed by
+                // Azure Communication Services — see Infrastructure/Services/EmailSender.cs)
+                await _emailSender.SendEmailAsync(
+                    Input!.Email!,
+                    "Confirm your email",
+                    $"Please confirm your account by " +
+                    $"<a href='{HtmlEncoder.Default.Encode(callbackUrl)}'>clicking here</a>.");
 
                 await _signInManager.SignInAsync(user, isPersistent: false);
                 return LocalRedirect(returnUrl);
             }
+
             foreach (var error in result.Errors)
             {
                 ModelState.AddModelError(string.Empty, error.Description);
             }
         }
 
-        // If we got this far, something failed, redisplay form
         return Page();
     }
 }

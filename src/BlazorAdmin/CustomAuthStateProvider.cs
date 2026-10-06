@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -12,7 +12,8 @@ namespace BlazorAdmin;
 
 public class CustomAuthStateProvider : AuthenticationStateProvider
 {
-    // TODO: Get Default Cache Duration from Config
+    // Cache duration is intentionally short so that role changes propagate quickly.
+    // A longer value could be made configurable via IConfiguration if needed.
     private static readonly TimeSpan UserCacheRefreshInterval = TimeSpan.FromSeconds(60);
 
     private readonly HttpClient _httpClient;
@@ -21,11 +22,12 @@ public class CustomAuthStateProvider : AuthenticationStateProvider
     private DateTimeOffset _userLastCheck = DateTimeOffset.FromUnixTimeSeconds(0);
     private ClaimsPrincipal _cachedUser = new ClaimsPrincipal(new ClaimsIdentity());
 
-    public CustomAuthStateProvider(HttpClient httpClient,
+    public CustomAuthStateProvider(
+        HttpClient httpClient,
         ILogger<CustomAuthStateProvider> logger)
     {
         _httpClient = httpClient;
-        _logger = logger;
+        _logger     = logger;
     }
 
     public override async Task<AuthenticationState> GetAuthenticationStateAsync()
@@ -35,13 +37,13 @@ public class CustomAuthStateProvider : AuthenticationStateProvider
 
     private async ValueTask<ClaimsPrincipal> GetUser(bool useCache = false)
     {
-        var now = DateTimeOffset.Now;
+        var now = DateTimeOffset.UtcNow;
         if (useCache && now < _userLastCheck + UserCacheRefreshInterval)
         {
             return _cachedUser;
         }
 
-        _cachedUser = await FetchUser();
+        _cachedUser    = await FetchUser();
         _userLastCheck = now;
 
         return _cachedUser;
@@ -49,16 +51,19 @@ public class CustomAuthStateProvider : AuthenticationStateProvider
 
     private async Task<ClaimsPrincipal> FetchUser()
     {
-        UserInfo user = null;
+        UserInfo? user = null;
 
         try
         {
-            _logger.LogInformation("Fetching user details from web api.");
-            user = await _httpClient.GetFromJsonAsync<UserInfo>("User");
+            _logger.LogInformation(
+                "{{\"event\":\"FetchUser\",\"message\":\"Fetching user info from API\"}}");
+
+            user = await _httpClient.GetFromJsonAsync<UserInfo>("api/v1/User");
         }
         catch (Exception exc)
         {
-            _logger.LogWarning(exc, "Fetching user failed.");
+            _logger.LogWarning(exc,
+                "{{\"event\":\"FetchUserFailed\",\"message\":\"Failed to fetch user info\"}}");
         }
 
         if (user == null || !user.IsAuthenticated)
@@ -79,7 +84,9 @@ public class CustomAuthStateProvider : AuthenticationStateProvider
             }
         }
 
-        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", user.Token);
+        // Attach the bearer token for subsequent API calls
+        _httpClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", user.Token);
 
         return new ClaimsPrincipal(identity);
     }

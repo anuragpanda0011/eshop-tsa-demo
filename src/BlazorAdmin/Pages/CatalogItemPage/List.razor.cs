@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using BlazorAdmin.Helpers;
 using BlazorShared.Interfaces;
@@ -9,29 +9,29 @@ namespace BlazorAdmin.Pages.CatalogItemPage;
 public partial class List : BlazorComponent
 {
     [Microsoft.AspNetCore.Components.Inject]
-    public ICatalogItemService CatalogItemService { get; set; }
+    public ICatalogItemService CatalogItemService { get; set; } = default!;
 
     [Microsoft.AspNetCore.Components.Inject]
-    public ICatalogLookupDataService<CatalogBrand> CatalogBrandService { get; set; }
+    public ICatalogLookupDataService<CatalogBrand> CatalogBrandService { get; set; } = default!;
 
     [Microsoft.AspNetCore.Components.Inject]
-    public ICatalogLookupDataService<CatalogType> CatalogTypeService { get; set; }
+    public ICatalogLookupDataService<CatalogType> CatalogTypeService { get; set; } = default!;
 
-    private List<CatalogItem> catalogItems = new List<CatalogItem>();
-    private List<CatalogType> catalogTypes = new List<CatalogType>();
-    private List<CatalogBrand> catalogBrands = new List<CatalogBrand>();
+    private List<CatalogItem>  catalogItems = new();
+    private List<CatalogType>  catalogTypes = new();
+    private List<CatalogBrand> catalogBrands = new();
 
-    private Edit EditComponent { get; set; }
-    private Delete DeleteComponent { get; set; }
-    private Details DetailsComponent { get; set; }
-    private Create CreateComponent { get; set; }
+    private Edit    EditComponent    { get; set; } = default!;
+    private Delete  DeleteComponent  { get; set; } = default!;
+    private Details DetailsComponent { get; set; } = default!;
+    private Create  CreateComponent  { get; set; } = default!;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            catalogItems = await CatalogItemService.List();
-            catalogTypes = await CatalogTypeService.List();
+            catalogItems  = await CatalogItemService.List();
+            catalogTypes  = await CatalogTypeService.List();
             catalogBrands = await CatalogBrandService.List();
 
             CallRequestRefresh();
