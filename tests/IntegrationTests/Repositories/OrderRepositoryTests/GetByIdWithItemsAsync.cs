@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -28,7 +28,7 @@ public class GetByIdWithItemsAsync
     [Fact]
     public async Task GetOrderAndItemsByOrderIdWhenMultipleOrdersPresent()
     {
-        //Arrange
+        // Arrange
         var itemOneUnitPrice = 5.50m;
         var itemOneUnits = 2;
         var itemTwoUnitPrice = 7.50m;
@@ -38,25 +38,29 @@ public class GetByIdWithItemsAsync
         _catalogContext.Orders.Add(firstOrder);
         int firstOrderId = firstOrder.Id;
 
-        var secondOrderItems = new List<OrderItem>();
-        secondOrderItems.Add(new OrderItem(OrderBuilder.TestCatalogItemOrdered, itemOneUnitPrice, itemOneUnits));
-        secondOrderItems.Add(new OrderItem(OrderBuilder.TestCatalogItemOrdered, itemTwoUnitPrice, itemTwoUnits));
+        var secondOrderItems = new List<OrderItem>
+        {
+            new OrderItem(OrderBuilder.TestCatalogItemOrdered, itemOneUnitPrice, itemOneUnits),
+            new OrderItem(OrderBuilder.TestCatalogItemOrdered, itemTwoUnitPrice, itemTwoUnits)
+        };
         var secondOrder = OrderBuilder.WithItems(secondOrderItems);
         _catalogContext.Orders.Add(secondOrder);
         int secondOrderId = secondOrder.Id;
 
         _catalogContext.SaveChanges();
 
-        //Act
+        // Act
         var spec = new OrderWithItemsByIdSpec(secondOrderId);
         var orderFromRepo = await _orderRepository.FirstOrDefaultAsync(spec);
 
-        //Assert
-        Assert.Equal(secondOrderId, orderFromRepo.Id);
+        // Assert
+        Assert.Equal(secondOrderId, orderFromRepo!.Id);
         Assert.Equal(secondOrder.OrderItems.Count, orderFromRepo.OrderItems.Count);
         Assert.Equal(1, orderFromRepo.OrderItems.Count(x => x.UnitPrice == itemOneUnitPrice));
         Assert.Equal(1, orderFromRepo.OrderItems.Count(x => x.UnitPrice == itemTwoUnitPrice));
-        Assert.Equal(itemOneUnits, orderFromRepo.OrderItems.SingleOrDefault(x => x.UnitPrice == itemOneUnitPrice).Units);
-        Assert.Equal(itemTwoUnits, orderFromRepo.OrderItems.SingleOrDefault(x => x.UnitPrice == itemTwoUnitPrice).Units);
+        Assert.Equal(itemOneUnits,
+            orderFromRepo.OrderItems.SingleOrDefault(x => x.UnitPrice == itemOneUnitPrice)!.Units);
+        Assert.Equal(itemTwoUnits,
+            orderFromRepo.OrderItems.SingleOrDefault(x => x.UnitPrice == itemTwoUnitPrice)!.Units);
     }
 }

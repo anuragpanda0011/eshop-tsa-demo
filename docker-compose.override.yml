@@ -1,20 +1,64 @@
 version: '3.4'
 services:
- eshopwebmvc:
-   environment:
-     - ASPNETCORE_ENVIRONMENT=Docker
-     - ASPNETCORE_URLS=http://+:8080
-   ports:
-     - "5106:8080"
-   volumes:
-     - ~/.aspnet/https:/root/.aspnet/https:ro
-     - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
- eshoppublicapi:
-   environment:
-     - ASPNETCORE_ENVIRONMENT=Docker
-     - ASPNETCORE_URLS=http://+:8080
-   ports:
-     - "5200:8080"
-   volumes:
-     - ~/.aspnet/https:/root/.aspnet/https:ro
-     - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+  eshopwebmvc:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Docker
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__CatalogConnection=${CATALOG_DB_CONNECTION_STRING:?CATALOG_DB_CONNECTION_STRING is required}
+      - ConnectionStrings__IdentityConnection=${IDENTITY_DB_CONNECTION_STRING:?IDENTITY_DB_CONNECTION_STRING is required}
+      - AZURE_KEY_VAULT_URI=${AZURE_KEY_VAULT_URI:?AZURE_KEY_VAULT_URI is required}
+      - AZURE_REDIS_CONNECTION_STRING=${AZURE_REDIS_CONNECTION_STRING:?AZURE_REDIS_CONNECTION_STRING is required}
+      - AZURE_SERVICE_BUS_CONNECTION_STRING=${AZURE_SERVICE_BUS_CONNECTION_STRING:?AZURE_SERVICE_BUS_CONNECTION_STRING is required}
+      - AZURE_STORAGE_ACCOUNT_URI=${AZURE_STORAGE_ACCOUNT_URI:?AZURE_STORAGE_ACCOUNT_URI is required}
+      - AZURE_EMAIL_CONNECTION_STRING=${AZURE_EMAIL_CONNECTION_STRING:?AZURE_EMAIL_CONNECTION_STRING is required}
+      - Auth__JwtKey=${AUTH_JWT_KEY:?AUTH_JWT_KEY is required}
+      - Auth__JwtIssuer=${AUTH_JWT_ISSUER:-https://localhost}
+      - Auth__JwtAudience=${AUTH_JWT_AUDIENCE:-eshop}
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+    ports:
+      - "5106:8080"
+    volumes:
+      - ~/.aspnet/https:/root/.aspnet/https:ro
+      - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+    depends_on:
+      - redis
+
+  eshoppublicapi:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Docker
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__CatalogConnection=${CATALOG_DB_CONNECTION_STRING:?CATALOG_DB_CONNECTION_STRING is required}
+      - ConnectionStrings__IdentityConnection=${IDENTITY_DB_CONNECTION_STRING:?IDENTITY_DB_CONNECTION_STRING is required}
+      - AZURE_KEY_VAULT_URI=${AZURE_KEY_VAULT_URI:?AZURE_KEY_VAULT_URI is required}
+      - AZURE_REDIS_CONNECTION_STRING=${AZURE_REDIS_CONNECTION_STRING:?AZURE_REDIS_CONNECTION_STRING is required}
+      - AZURE_SERVICE_BUS_CONNECTION_STRING=${AZURE_SERVICE_BUS_CONNECTION_STRING:?AZURE_SERVICE_BUS_CONNECTION_STRING is required}
+      - AZURE_STORAGE_ACCOUNT_URI=${AZURE_STORAGE_ACCOUNT_URI:?AZURE_STORAGE_ACCOUNT_URI is required}
+      - AZURE_EMAIL_CONNECTION_STRING=${AZURE_EMAIL_CONNECTION_STRING:?AZURE_EMAIL_CONNECTION_STRING is required}
+      - Auth__JwtKey=${AUTH_JWT_KEY:?AUTH_JWT_KEY is required}
+      - Auth__JwtIssuer=${AUTH_JWT_ISSUER:-https://localhost}
+      - Auth__JwtAudience=${AUTH_JWT_AUDIENCE:-eshop}
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+    ports:
+      - "5200:8080"
+    volumes:
+      - ~/.aspnet/https:/root/.aspnet/https:ro
+      - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
+    driver: local

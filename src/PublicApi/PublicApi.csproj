@@ -1,6 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <PropertyGroup> 
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>Microsoft.eShopWeb.PublicApi</RootNamespace>
     <UserSecretsId>5b662463-1efd-4bae-bde4-befe0be3e8ff</UserSecretsId>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
@@ -21,20 +22,27 @@
     <PackageReference Include="Microsoft.AspNetCore.Identity.UI" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" >
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" />
     <PackageReference Include="Microsoft.VisualStudio.Web.CodeGeneration.Design" />
-
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
+    <!-- Redis distributed cache -->
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" />
+    <!-- Azure Service Bus for structured event publishing -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
+    <!-- Azure Blob Storage for image uploads -->
+    <PackageReference Include="Azure.Storage.Blobs" />
+    <!-- Azure Communication Services for email -->
+    <PackageReference Include="Azure.Communication.Email" />
+    <!-- Built-in ASP.NET Core rate limiter (included in net8.0 framework) -->
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ApplicationCore\ApplicationCore.csproj" />
     <ProjectReference Include="..\Infrastructure\Infrastructure.csproj" />
   </ItemGroup>
-
 
 </Project>

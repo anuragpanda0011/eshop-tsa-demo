@@ -68,5 +68,12 @@
     <PackageVersion Include="MSTest.TestAdapter" Version="3.2.2" />
     <PackageVersion Include="MSTest.TestFramework" Version="3.2.2" />
     <PackageVersion Include="coverlet.collector" Version="6.0.2" />
+      <PackageVersion Include="Azure.Communication.Email" Version="1.0.1" />
+    <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.18.1" />
+    <PackageVersion Include="Azure.Storage.Blobs" Version="12.22.2" />
+    <PackageVersion Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="8.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageVersion Include="Microsoft.IdentityModel.Tokens" Version="8.1.2" />
+    <PackageVersion Include="StackExchange.Redis" Version="2.8.16" />
   </ItemGroup>
 </Project>

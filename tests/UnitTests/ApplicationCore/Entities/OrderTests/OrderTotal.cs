@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
 using Microsoft.eShopWeb.UnitTests.Builders;
 using Xunit;
@@ -22,9 +22,9 @@ public class OrderTotal
     {
         var builder = new OrderBuilder();
         var items = new List<OrderItem>
-            {
-                new OrderItem(builder.TestCatalogItemOrdered, _testUnitPrice, 1)
-            };
+        {
+            new OrderItem(builder.TestCatalogItemOrdered, _testUnitPrice, 1)
+        };
         var order = new OrderBuilder().WithItems(items);
         Assert.Equal(_testUnitPrice, order.Total());
     }

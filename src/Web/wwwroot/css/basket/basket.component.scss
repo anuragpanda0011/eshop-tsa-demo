@@ -64,6 +64,25 @@
         width: 100%;
     }
 
+    &-remove {
+        background-color: transparent;
+        border: 1px solid #CCCCCC;
+        border-radius: 0;
+        color: $color-foreground-dark;
+        font-size: 0.75rem;
+        padding: 0.4rem 0.6rem;
+        text-transform: uppercase;
+        transition: all $animation-speed-default;
+        white-space: nowrap;
+
+        &:hover {
+            background-color: #C21F39;
+            border-color: #C21F39;
+            color: $color-foreground-brighter;
+            transition: all $animation-speed-default;
+        }
+    }
+
     &-checkout {
         background-color: $color-secondary;
         border: 0;

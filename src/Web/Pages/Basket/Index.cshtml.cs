@@ -1,4 +1,4 @@
-﻿using Ardalis.GuardClauses;
+using Ardalis.GuardClauses;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.eShopWeb.ApplicationCore.Entities;
@@ -47,6 +47,11 @@ public class IndexModel : PageModel
         var basket = await _basketService.AddItemToBasket(username,
             productDetails.Id, item.Price);
 
+        // The basket view is cached for 5 minutes. Without dropping it here the
+        // page keeps serving the pre-add copy, so the item appears to vanish
+        // while the header badge (which reads the database) counts it.
+        await _basketViewModelService.InvalidateBasketCacheAsync(username);
+
         BasketModel = await _basketViewModelService.Map(basket);
 
         return RedirectToPage();
@@ -59,10 +64,33 @@ public class IndexModel : PageModel
             return;
         }
 
-        var basketView = await _basketViewModelService.GetOrCreateBasketForUser(GetOrSetBasketCookieAndUserName());
+        var username = GetOrSetBasketCookieAndUserName();
+        var basketView = await _basketViewModelService.GetOrCreateBasketForUser(username);
         var updateModel = items.ToDictionary(b => b.Id.ToString(), b => b.Quantity);
         var basket = await _basketService.SetQuantities(basketView.Id, updateModel);
+
+        // Same reason as the add path: quantity changes and removals are written
+        // to the database, then read straight back out of a stale cache.
+        await _basketViewModelService.InvalidateBasketCacheAsync(username);
+
         BasketModel = await _basketViewModelService.Map(basket);
+    }
+
+    public async Task<IActionResult> OnPostRemove(int id)
+    {
+        var username = GetOrSetBasketCookieAndUserName();
+        var basketView = await _basketViewModelService.GetOrCreateBasketForUser(username);
+
+        // SetQuantities only touches the ids it is handed, so pass every current
+        // line and zero the one being removed; RemoveEmptyItems then drops it.
+        var updateModel = basketView.Items.ToDictionary(
+            b => b.Id.ToString(),
+            b => b.Id == id ? 0 : b.Quantity);
+
+        await _basketService.SetQuantities(basketView.Id, updateModel);
+        await _basketViewModelService.InvalidateBasketCacheAsync(username);
+
+        return RedirectToPage();
     }
 
     private string GetOrSetBasketCookieAndUserName()
