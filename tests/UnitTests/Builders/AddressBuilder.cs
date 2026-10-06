@@ -1,4 +1,4 @@
-﻿using Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
+using Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
 
 namespace Microsoft.eShopWeb.UnitTests.Builders;
 
@@ -15,10 +15,12 @@ public class AddressBuilder
     {
         _address = WithDefaultValues();
     }
+
     public Address Build()
     {
         return _address;
     }
+
     public Address WithDefaultValues()
     {
         _address = new Address(TestStreet, TestCity, TestState, TestCountry, TestZipCode);

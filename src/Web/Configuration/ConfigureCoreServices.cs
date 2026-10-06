@@ -1,4 +1,4 @@
-﻿using Microsoft.eShopWeb.ApplicationCore.Interfaces;
+using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 using Microsoft.eShopWeb.ApplicationCore.Services;
 using Microsoft.eShopWeb.Infrastructure.Data;
 using Microsoft.eShopWeb.Infrastructure.Data.Queries;
@@ -23,6 +23,8 @@ public static class ConfigureCoreServices
         services.AddSingleton<IUriComposer>(new UriComposer(catalogSettings));
 
         services.AddScoped(typeof(IAppLogger<>), typeof(LoggerAdapter<>));
+
+        // EmailSender is registered via Infrastructure wiring using Azure Communication Services
         services.AddTransient<IEmailSender, EmailSender>();
 
         return services;

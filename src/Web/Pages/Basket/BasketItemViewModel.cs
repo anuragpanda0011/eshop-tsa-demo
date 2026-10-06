@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace Microsoft.eShopWeb.Web.Pages.Basket;
 
@@ -12,6 +12,6 @@ public class BasketItemViewModel
 
     [Range(0, int.MaxValue, ErrorMessage = "Quantity must be bigger than 0")]
     public int Quantity { get; set; }
-  
+
     public string? PictureUrl { get; set; }
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace Microsoft.eShopWeb.PublicApi.AuthEndpoints;
 
@@ -11,6 +11,7 @@ public class AuthenticateResponse : BaseResponse
     public AuthenticateResponse()
     {
     }
+
     public bool Result { get; set; } = false;
     public string Token { get; set; } = string.Empty;
     public string Username { get; set; } = string.Empty;

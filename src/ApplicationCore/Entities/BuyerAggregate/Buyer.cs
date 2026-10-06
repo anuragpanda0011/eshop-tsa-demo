@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Ardalis.GuardClauses;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 
@@ -12,8 +12,9 @@ public class Buyer : BaseEntity, IAggregateRoot
 
     public IEnumerable<PaymentMethod> PaymentMethods => _paymentMethods.AsReadOnly();
 
-    #pragma warning disable CS8618 // Required by Entity Framework
+#pragma warning disable CS8618 // Required by Entity Framework
     private Buyer() { }
+#pragma warning restore CS8618
 
     public Buyer(string identity) : this()
     {

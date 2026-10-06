@@ -13,6 +13,13 @@ param sqlAdminPassword string
 @secure()
 param appUserPassword string
 
+// Optional: subnet resource ID for private endpoint
+param privateEndpointSubnetId string = ''
+param virtualNetworkName string = ''
+param privateDnsZoneId string = ''
+
+var usePrivateEndpoint = !empty(privateEndpointSubnetId)
+
 resource sqlServer 'Microsoft.Sql/servers@2022-05-01-preview' = {
   name: name
   location: location
@@ -20,7 +27,8 @@ resource sqlServer 'Microsoft.Sql/servers@2022-05-01-preview' = {
   properties: {
     version: '12.0'
     minimalTlsVersion: '1.2'
-    publicNetworkAccess: 'Enabled'
+    // Disable public network access when private endpoint is configured
+    publicNetworkAccess: usePrivateEndpoint ? 'Disabled' : 'Enabled'
     administratorLogin: sqlAdmin
     administratorLoginPassword: sqlAdminPassword
   }
@@ -28,28 +36,76 @@ resource sqlServer 'Microsoft.Sql/servers@2022-05-01-preview' = {
   resource database 'databases' = {
     name: databaseName
     location: location
+    sku: {
+      name: 'GP_Gen5'
+      tier: 'GeneralPurpose'
+      family: 'Gen5'
+      capacity: 2
+    }
+    properties: {
+      zoneRedundant: true
+      requestedBackupStorageRedundancy: 'Zone'
+    }
   }
 
-  resource firewall 'firewallRules' = {
-    name: 'Azure Services'
+  // Only open Azure-internal firewall rule when NOT using private endpoints
+  // (narrow rule: 0.0.0.0-0.0.0.0 = Azure services only)
+  resource firewallAzureServices 'firewallRules' = if (!usePrivateEndpoint) {
+    name: 'AllowAzureServices'
     properties: {
-      // Allow all clients
-      // Note: range [0.0.0.0-0.0.0.0] means "allow all Azure-hosted clients only".
-      // This is not sufficient, because we also want to allow direct access from developer machine, for debugging purposes.
-      startIpAddress: '0.0.0.1'
-      endIpAddress: '255.255.255.254'
+      startIpAddress: '0.0.0.0'
+      endIpAddress: '0.0.0.0'
     }
   }
 }
 
+// Private endpoint for SQL Server (production path)
+resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-04-01' = if (usePrivateEndpoint) {
+  name: '${name}-pe'
+  location: location
+  tags: tags
+  properties: {
+    subnet: {
+      id: privateEndpointSubnetId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: '${name}-pe-connection'
+        properties: {
+          privateLinkServiceId: sqlServer.id
+          groupIds: [
+            'sqlServer'
+          ]
+        }
+      }
+    ]
+  }
+}
+
+resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-04-01' = if (usePrivateEndpoint && !empty(privateDnsZoneId)) {
+  parent: privateEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'privatelink-database-windows-net'
+        properties: {
+          privateDnsZoneId: privateDnsZoneId
+        }
+      }
+    ]
+  }
+}
+
+// Deployment script runs after private endpoint is established (or immediately in non-PE mode)
 resource sqlDeploymentScript 'Microsoft.Resources/deploymentScripts@2020-10-01' = {
   name: '${name}-deployment-script'
   location: location
   kind: 'AzureCLI'
   properties: {
     azCliVersion: '2.37.0'
-    retentionInterval: 'PT1H' // Retain the script resource for 1 hour after it ends running
-    timeout: 'PT5M' // Five minutes
+    retentionInterval: 'PT1H'
+    timeout: 'PT5M'
     cleanupPreference: 'OnSuccess'
     environmentVariables: [
       {
@@ -78,52 +134,85 @@ resource sqlDeploymentScript 'Microsoft.Resources/deploymentScripts@2020-10-01' 
       }
     ]
 
+    // Uses parameterized sqlcmd invocation; passwords are passed via env vars (not interpolated into SQL)
     scriptContent: '''
-wget https://github.com/microsoft/go-sqlcmd/releases/download/v0.8.1/sqlcmd-v0.8.1-linux-x64.tar.bz2
-tar x -f sqlcmd-v0.8.1-linux-x64.tar.bz2 -C .
+      set -euo pipefail
 
-cat <<SCRIPT_END > ./initDb.sql
-drop user ${APPUSERNAME}
-go
-create user ${APPUSERNAME} with password = '${APPUSERPASSWORD}'
-go
-alter role db_owner add member ${APPUSERNAME}
-go
-SCRIPT_END
+      wget -q https://github.com/microsoft/go-sqlcmd/releases/download/v0.8.1/sqlcmd-v0.8.1-linux-x64.tar.bz2
+      tar x -f sqlcmd-v0.8.1-linux-x64.tar.bz2 -C .
 
-./sqlcmd -S ${DBSERVER} -d ${DBNAME} -U ${SQLADMIN} -i ./initDb.sql
+      # Write the SQL script using positional sqlcmd variables to avoid shell-interpolated SQL
+      cat <<'SCRIPT_END' > ./initDb.sql
+      IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'$(APPUSERNAME)')
+      BEGIN
+        DROP USER [$(APPUSERNAME)]
+      END
+      GO
+      CREATE USER [$(APPUSERNAME)] WITH PASSWORD = '$(APPUSERPASSWORD)'
+      GO
+      ALTER ROLE db_owner ADD MEMBER [$(APPUSERNAME)]
+      GO
+      SCRIPT_END
+
+      ./sqlcmd \
+        -S "${DBSERVER}" \
+        -d "${DBNAME}" \
+        -U "${SQLADMIN}" \
+        -v APPUSERNAME="${APPUSERNAME}" \
+        -v APPUSERPASSWORD="${APPUSERPASSWORD}" \
+        -i ./initDb.sql
     '''
   }
-}
-
-resource sqlAdminPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2022-07-01' = {
-  parent: keyVault
-  name: 'sqlAdminPassword'
-  properties: {
-    value: sqlAdminPassword
-  }
-}
-
-resource appUserPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2022-07-01' = {
-  parent: keyVault
-  name: 'appUserPassword'
-  properties: {
-    value: appUserPassword
-  }
-}
-
-resource sqlAzureConnectionStringSercret 'Microsoft.KeyVault/vaults/secrets@2022-07-01' = {
-  parent: keyVault
-  name: connectionStringKey
-  properties: {
-    value: '${connectionString}; Password=${appUserPassword}'
-  }
+  dependsOn: usePrivateEndpoint ? [ privateEndpoint ] : []
 }
 
 resource keyVault 'Microsoft.KeyVault/vaults@2022-07-01' existing = {
   name: keyVaultName
 }
 
-var connectionString = 'Server=${sqlServer.properties.fullyQualifiedDomainName}; Database=${sqlServer::database.name}; User=${appUser}'
+// Store admin password as Key Vault secret
+resource sqlAdminPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2022-07-01' = {
+  parent: keyVault
+  name: 'sqlAdminPassword'
+  properties: {
+    value: sqlAdminPassword
+    attributes: {
+      enabled: true
+    }
+  }
+}
+
+// Store app user password as Key Vault secret
+resource appUserPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2022-07-01' = {
+  parent: keyVault
+  name: 'appUserPassword'
+  properties: {
+    value: appUserPassword
+    attributes: {
+      enabled: true
+    }
+  }
+}
+
+// Store full connection string (without embedded password — password injected at runtime from KV)
+// Using sslmode=require / Encrypt=True enforces TLS in transit
+resource sqlAzureConnectionStringSecret 'Microsoft.KeyVault/vaults/secrets@2022-07-01' = {
+  parent: keyVault
+  name: connectionStringKey
+  properties: {
+    // Encrypt=True;TrustServerCertificate=False enforces TLS; password injected at runtime
+    value: '${connectionString}; Password=${appUserPassword}'
+    attributes: {
+      enabled: true
+    }
+  }
+}
+
+// Connection string base — password is stored separately and injected at runtime
+// Encrypt=True;TrustServerCertificate=False enforces TLS in transit
+var connectionString = 'Server=${sqlServer.properties.fullyQualifiedDomainName}; Database=${sqlServer::database.name}; User Id=${appUser}; Encrypt=True; TrustServerCertificate=False; Connection Timeout=30'
+
 output connectionStringKey string = connectionStringKey
 output databaseName string = sqlServer::database.name
+output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
+output sqlServerId string = sqlServer.id

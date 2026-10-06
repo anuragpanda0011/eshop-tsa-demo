@@ -1,0 +1,39 @@
+# Copy this file to terraform.tfvars and fill in the required values.
+# DO NOT commit terraform.tfvars to source control — add it to .gitignore.
+
+subscription_id    = "00000000-0000-0000-0000-000000000000"
+environment        = "prod"
+project            = "eshoponweb"
+primary_location   = "eastus2"
+secondary_location = "centralus"
+
+# SQL credentials — use a strong, randomly generated password.
+# After first apply the credentials are stored in Key Vault; rotate via:
+#   az keyvault secret set --vault-name kv-eshoponweb-prod --name sql-admin-password --value "<new>"
+sql_admin_login    = "sqladmin"
+sql_admin_password = "REPLACE_ME_STRONG_PASSWORD_32chars!"
+
+# Alert destination
+alert_email = "ops-team@eshoponweb.example.com"
+
+# GitHub integration (scopes the OIDC federated identity credential)
+github_org       = "dotnet-architecture"
+github_repo_name = "eShopOnWeb"
+github_repo_url  = "https://github.com/dotnet-architecture/eShopOnWeb"
+github_repo_branch = "main"
+
+# Container images — MUST be SHA-tagged references supplied by CI/CD.
+# Do NOT use mutable tags (e.g. :latest) in production.
+# Example (replace with real SHA after first CI build):
+# web_image = "creshoponwebprod.azurecr.io/eshop/web:sha-abc1234def5678"
+# api_image = "creshoponwebprod.azurecr.io/eshop/publicapi:sha-abc1234def5678"
+
+# Customer-managed key for Log Analytics (requires ~$400/month dedicated cluster)
+enable_law_cmk = false  # Set to true for regulated/PII production workloads
+
+tags = {
+  Project     = "eShopOnWeb"
+  Environment = "prod"
+  ManagedBy   = "Terraform"
+  CostCenter  = "engineering"
+}

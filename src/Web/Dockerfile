@@ -21,7 +21,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 COPY --from=build /app/src/Web/out ./
 
-# Optional: Set this here if not setting it from docker-compose.yml
-# ENV ASPNETCORE_ENVIRONMENT Development
+# Secrets are injected at runtime via environment variables or Azure Key Vault references.
+# Do NOT bake secrets into the image.
 
 ENTRYPOINT ["dotnet", "Web.dll"]

@@ -1,4 +1,4 @@
-﻿using Microsoft.eShopWeb.FunctionalTests.Web;
+using Microsoft.eShopWeb.FunctionalTests.Web;
 using Xunit;
 
 namespace Microsoft.eShopWeb.FunctionalTests.WebRazorPages;

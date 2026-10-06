@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using BlazorAdmin.Services;
 using Microsoft.AspNetCore.Components;
 
@@ -7,52 +7,33 @@ namespace BlazorAdmin.Helpers;
 public class ToastComponent : ComponentBase, IDisposable
 {
     [Inject]
-    ToastService ToastService
-    {
-        get;
-        set;
-    }
-    protected string Heading
-    {
-        get;
-        set;
-    }
-    protected string Message
-    {
-        get;
-        set;
-    }
-    protected bool IsVisible
-    {
-        get;
-        set;
-    }
-    protected string BackgroundCssClass
-    {
-        get;
-        set;
-    }
-    protected string IconCssClass
-    {
-        get;
-        set;
-    }
+    ToastService ToastService { get; set; }
+
+    protected string Heading { get; set; }
+    protected string Message { get; set; }
+    protected bool IsVisible { get; set; }
+    protected string BackgroundCssClass { get; set; }
+    protected string IconCssClass { get; set; }
+
     protected override void OnInitialized()
     {
         ToastService.OnShow += ShowToast;
         ToastService.OnHide += HideToast;
     }
+
     private void ShowToast(string message, ToastLevel level)
     {
         BuildToastSettings(level, message);
         IsVisible = true;
         StateHasChanged();
     }
+
     private void HideToast()
     {
         IsVisible = false;
         StateHasChanged();
     }
+
     private void BuildToastSettings(ToastLevel level, string message)
     {
         switch (level)
@@ -80,8 +61,10 @@ public class ToastComponent : ComponentBase, IDisposable
         }
         Message = message;
     }
+
     public void Dispose()
     {
         ToastService.OnShow -= ShowToast;
+        ToastService.OnHide -= HideToast;
     }
 }

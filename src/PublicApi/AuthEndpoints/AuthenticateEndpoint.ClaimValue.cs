@@ -1,4 +1,4 @@
-﻿namespace Microsoft.eShopWeb.PublicApi.AuthEndpoints;
+namespace Microsoft.eShopWeb.PublicApi.AuthEndpoints;
 
 public class ClaimValue
 {

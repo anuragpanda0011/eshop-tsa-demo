@@ -1,4 +1,4 @@
-﻿using BlazorShared.Models;
+using BlazorShared.Models;
 using Microsoft.eShopWeb;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Net;
@@ -15,12 +15,17 @@ public class DeleteCatalogItemEndpointTest
     {
         var adminToken = ApiTokenHelper.GetAdminUserToken();
         var client = ProgramTest.NewClient;
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
-        var response = await client.DeleteAsync("api/catalog-items/12");
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", adminToken);
+
+        // Route updated to /api/v1/ prefix.
+        var response = await client.DeleteAsync("api/v1/catalog-items/12");
         response.EnsureSuccessStatusCode();
+
         var stringResponse = await response.Content.ReadAsStringAsync();
         var model = stringResponse.FromJson<DeleteCatalogItemResponse>();
 
+        Assert.IsNotNull(model, "Response body could not be deserialized.");
         Assert.AreEqual("Deleted", model!.Status);
     }
 
@@ -29,8 +34,11 @@ public class DeleteCatalogItemEndpointTest
     {
         var adminToken = ApiTokenHelper.GetAdminUserToken();
         var client = ProgramTest.NewClient;
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
-        var response = await client.DeleteAsync("api/catalog-items/0");
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", adminToken);
+
+        // Route updated to /api/v1/ prefix.
+        var response = await client.DeleteAsync("api/v1/catalog-items/0");
 
         Assert.AreEqual(HttpStatusCode.NotFound, response.StatusCode);
     }

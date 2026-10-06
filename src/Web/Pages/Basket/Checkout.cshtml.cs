@@ -1,4 +1,5 @@
-﻿using Ardalis.GuardClauses;
+using Ardalis.GuardClauses;
+using Azure.Messaging.ServiceBus;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -8,6 +9,7 @@ using Microsoft.eShopWeb.ApplicationCore.Exceptions;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 using Microsoft.eShopWeb.Infrastructure.Identity;
 using Microsoft.eShopWeb.Web.Interfaces;
+using System.Text.Json;
 
 namespace Microsoft.eShopWeb.Web.Pages.Basket;
 
@@ -20,18 +22,25 @@ public class CheckoutModel : PageModel
     private string? _username = null;
     private readonly IBasketViewModelService _basketViewModelService;
     private readonly IAppLogger<CheckoutModel> _logger;
+    private readonly ServiceBusClient _serviceBusClient;
+    private readonly IConfiguration _configuration;
 
-    public CheckoutModel(IBasketService basketService,
+    public CheckoutModel(
+        IBasketService basketService,
         IBasketViewModelService basketViewModelService,
         SignInManager<ApplicationUser> signInManager,
         IOrderService orderService,
-        IAppLogger<CheckoutModel> logger)
+        IAppLogger<CheckoutModel> logger,
+        ServiceBusClient serviceBusClient,
+        IConfiguration configuration)
     {
         _basketService = basketService;
         _signInManager = signInManager;
         _orderService = orderService;
         _basketViewModelService = basketViewModelService;
         _logger = logger;
+        _serviceBusClient = serviceBusClient;
+        _configuration = configuration;
     }
 
     public BasketViewModel BasketModel { get; set; } = new BasketViewModel();
@@ -54,12 +63,15 @@ public class CheckoutModel : PageModel
 
             var updateModel = items.ToDictionary(b => b.Id.ToString(), b => b.Quantity);
             await _basketService.SetQuantities(BasketModel.Id, updateModel);
-            await _orderService.CreateOrderAsync(BasketModel.Id, new Address("123 Main St.", "Kent", "OH", "United States", "44240"));
+            await _orderService.CreateOrderAsync(
+                BasketModel.Id,
+                new Address("123 Main St.", "Kent", "OH", "United States", "44240"));
             await _basketService.DeleteBasketAsync(BasketModel.Id);
+
+            await PublishOrderPlacedEventAsync(BasketModel);
         }
         catch (EmptyBasketOnCheckoutException emptyBasketOnCheckoutException)
         {
-            //Redirect to Empty Basket page
             _logger.LogWarning(emptyBasketOnCheckoutException.Message);
             return RedirectToPage("/Basket/Index");
         }
@@ -90,8 +102,61 @@ public class CheckoutModel : PageModel
         if (_username != null) return;
 
         _username = Guid.NewGuid().ToString();
-        var cookieOptions = new CookieOptions();
-        cookieOptions.Expires = DateTime.Today.AddYears(10);
+        var cookieOptions = new CookieOptions
+        {
+            Expires = DateTime.Today.AddYears(10),
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Lax,
+            IsEssential = true
+        };
         Response.Cookies.Append(Constants.BASKET_COOKIENAME, _username, cookieOptions);
+    }
+
+    private async Task PublishOrderPlacedEventAsync(BasketViewModel basket)
+    {
+        try
+        {
+            var topicName = _configuration["ServiceBus:OrderPlacedTopic"] ?? "order-placed";
+            var sender = _serviceBusClient.CreateSender(topicName);
+
+            var payload = new
+            {
+                EventType = "OrderPlaced",
+                OccurredAt = DateTimeOffset.UtcNow,
+                BuyerId = basket.BuyerId,
+                BasketId = basket.Id,
+                Total = basket.Total(),
+                Items = basket.Items.Select(i => new
+                {
+                    i.CatalogItemId,
+                    i.ProductName,
+                    i.UnitPrice,
+                    i.Quantity
+                })
+            };
+
+            var messageBody = JsonSerializer.Serialize(payload);
+            var message = new ServiceBusMessage(messageBody)
+            {
+                ContentType = "application/json",
+                Subject = "OrderPlaced"
+            };
+
+            await sender.SendMessageAsync(message);
+
+            _logger.LogInformation(
+                "Published OrderPlaced event for BuyerId={BuyerId} BasketId={BasketId}",
+                basket.BuyerId,
+                basket.Id);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: log but do not rethrow
+            _logger.LogWarning(
+                "Failed to publish OrderPlaced event for BasketId={BasketId}: {Error}",
+                basket.Id,
+                ex.Message);
+        }
     }
 }

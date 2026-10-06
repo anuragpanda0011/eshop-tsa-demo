@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 
 namespace BlazorAdmin.Helpers;
 
@@ -21,5 +21,4 @@ public class BlazorComponent : ComponentBase
     {
         StateHasChanged();
     }
-
 }

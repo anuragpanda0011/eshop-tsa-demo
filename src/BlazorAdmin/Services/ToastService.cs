@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Timers;
 
 namespace BlazorAdmin.Services;
@@ -15,40 +15,46 @@ public class ToastService : IDisposable
 {
     public event Action<string, ToastLevel> OnShow;
     public event Action OnHide;
-    private Timer Countdown;
+
+    private Timer _countdown;
+
     public void ShowToast(string message, ToastLevel level)
     {
         OnShow?.Invoke(message, level);
         StartCountdown();
     }
+
     private void StartCountdown()
     {
-        SetCountdown();
-        if (Countdown.Enabled)
+        EnsureCountdown();
+
+        if (_countdown.Enabled)
         {
-            Countdown.Stop();
-            Countdown.Start();
+            _countdown.Stop();
         }
-        else
-        {
-            Countdown.Start();
-        }
+
+        _countdown.Start();
     }
-    private void SetCountdown()
+
+    private void EnsureCountdown()
     {
-        if (Countdown == null)
+        if (_countdown == null)
         {
-            Countdown = new Timer(3000);
-            Countdown.Elapsed += HideToast;
-            Countdown.AutoReset = false;
+            _countdown = new Timer(3000)
+            {
+                AutoReset = false
+            };
+            _countdown.Elapsed += HideToast;
         }
     }
+
     private void HideToast(object source, ElapsedEventArgs args)
     {
         OnHide?.Invoke();
     }
+
     public void Dispose()
     {
-        Countdown?.Dispose();
+        _countdown?.Dispose();
     }
 }
