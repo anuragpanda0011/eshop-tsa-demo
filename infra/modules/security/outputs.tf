@@ -1,82 +1,95 @@
 output "key_vault_id" {
-  value = azurerm_key_vault.main.id
+  description = "Resource ID of the Key Vault."
+  value       = azurerm_key_vault.main.id
 }
 
 output "key_vault_uri" {
-  value = azurerm_key_vault.main.vault_uri
+  description = "URI of the Key Vault."
+  value       = azurerm_key_vault.main.vault_uri
 }
 
 output "key_vault_name" {
-  value = azurerm_key_vault.main.name
+  description = "Name of the Key Vault."
+  value       = azurerm_key_vault.main.name
 }
 
-output "managed_identity_web_id" {
-  value = azurerm_user_assigned_identity.web.id
+output "web_managed_identity_id" {
+  description = "Resource ID of the Web user-assigned managed identity."
+  value       = azurerm_user_assigned_identity.web.id
 }
 
-output "managed_identity_api_id" {
-  value = azurerm_user_assigned_identity.api.id
+output "web_managed_identity_client_id" {
+  description = "Client ID of the Web user-assigned managed identity."
+  value       = azurerm_user_assigned_identity.web.client_id
 }
 
-output "managed_identity_apim_id" {
-  value       = azurerm_user_assigned_identity.apim.id
-  description = "Resource ID of the dedicated APIM managed identity."
+output "web_managed_identity_principal_id" {
+  description = "Principal ID of the Web user-assigned managed identity."
+  value       = azurerm_user_assigned_identity.web.principal_id
 }
 
-output "managed_identity_apim_principal_id" {
-  value       = azurerm_user_assigned_identity.apim.principal_id
-  description = "Principal ID of the dedicated APIM managed identity."
+output "api_managed_identity_id" {
+  description = "Resource ID of the API user-assigned managed identity."
+  value       = azurerm_user_assigned_identity.api.id
 }
 
-output "managed_identity_apim_client_id" {
-  value       = azurerm_user_assigned_identity.apim.client_id
-  description = "Client ID of the dedicated APIM managed identity."
+output "api_managed_identity_client_id" {
+  description = "Client ID of the API user-assigned managed identity."
+  value       = azurerm_user_assigned_identity.api.client_id
 }
 
-output "managed_identity_acr_pull_id" {
-  value = azurerm_user_assigned_identity.acr_pull.id
+output "api_managed_identity_principal_id" {
+  description = "Principal ID of the API user-assigned managed identity."
+  value       = azurerm_user_assigned_identity.api.principal_id
 }
 
-output "managed_identity_web_client_id" {
-  value = azurerm_user_assigned_identity.web.client_id
+output "cicd_managed_identity_id" {
+  description = "Resource ID of the CI/CD user-assigned managed identity."
+  value       = azurerm_user_assigned_identity.cicd.id
 }
 
-output "managed_identity_api_client_id" {
-  value = azurerm_user_assigned_identity.api.client_id
+output "cicd_managed_identity_client_id" {
+  description = "Client ID of the CI/CD user-assigned managed identity."
+  value       = azurerm_user_assigned_identity.cicd.client_id
 }
 
-output "managed_identity_acr_pull_client_id" {
-  value = azurerm_user_assigned_identity.acr_pull.client_id
+output "cicd_service_principal_client_id" {
+  description = "Client ID of the CI/CD service principal (for OIDC)."
+  value       = azuread_application.cicd.client_id
 }
 
-output "managed_identity_web_principal_id" {
-  value = azurerm_user_assigned_identity.web.principal_id
+output "cicd_service_principal_object_id" {
+  description = "Object ID of the CI/CD service principal (for role assignments)."
+  value       = azuread_service_principal.cicd.object_id
 }
 
-output "managed_identity_api_principal_id" {
-  value = azurerm_user_assigned_identity.api.principal_id
+output "storage_account_id" {
+  description = "Resource ID of the data-protection storage account."
+  value       = azurerm_storage_account.data_protection.id
 }
 
-output "managed_identity_acr_pull_principal_id" {
-  value = azurerm_user_assigned_identity.acr_pull.principal_id
+output "storage_account_name" {
+  description = "Name of the data-protection storage account."
+  value       = azurerm_storage_account.data_protection.name
+}
+
+output "storage_container_name" {
+  description = "Name of the data-protection blob container."
+  value       = azurerm_storage_container.data_protection.name
+}
+
+output "jwt_secret_key_value" {
+  description = "JWT secret key value (sensitive — sourced from input variable, stored in Key Vault)."
+  value       = var.jwt_secret_key_value
+  sensitive   = true
+}
+
+output "storage_cmk_key_id" {
+  description = "Resource ID of the storage CMK Key Vault key."
+  value       = azurerm_key_vault_key.storage_cmk.id
 }
 
 output "data_protection_key_id" {
-  value = azurerm_key_vault_key.data_protection.id
-}
-
-output "data_protection_key_name" {
-  value = azurerm_key_vault_key.data_protection.name
-}
-
-output "jwt_secret_key_secret_name" {
-  value = azurerm_key_vault_secret.jwt_secret_key.name
-}
-
-output "audit_storage_account_id" {
-  value = azurerm_storage_account.audit.id
-}
-
-output "audit_storage_primary_blob_endpoint" {
-  value = azurerm_storage_account.audit.primary_blob_endpoint
+  description = "Resource ID of the Data Protection ring Key Vault key."
+  value       = azurerm_key_vault_key.data_protection.id
 }

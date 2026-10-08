@@ -1,91 +1,85 @@
 variable "resource_group_name" {
-  type = string
+  description = "Name of the resource group."
+  type        = string
 }
 
 variable "location" {
-  type = string
+  description = "Azure region."
+  type        = string
 }
 
 variable "project" {
-  type = string
+  description = "Project name for naming."
+  type        = string
 }
 
 variable "environment" {
-  type = string
+  description = "Environment name for naming."
+  type        = string
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
-}
-
-variable "subscription_id" {
-  type = string
-}
-
-variable "tenant_id" {
-  type = string
+  description = "Resource tags."
+  type        = map(string)
+  default     = {}
 }
 
 variable "github_org" {
-  type = string
+  description = "GitHub organisation name."
+  type        = string
 }
 
 variable "github_repo" {
-  type = string
+  description = "GitHub repository name."
+  type        = string
 }
 
-variable "github_branch" {
-  type    = string
-  default = "main"
+variable "subscription_id" {
+  description = "Azure subscription ID."
+  type        = string
 }
 
 variable "acr_id" {
-  type = string
+  description = "Resource ID of the Container Registry."
+  type        = string
 }
 
 variable "acr_login_server" {
-  type = string
-}
-
-variable "aca_web_id" {
+  description = "Login server URL of the Container Registry."
   type        = string
-  description = "Resource ID of the Web Container App. RBAC scoped to this resource only."
 }
 
-variable "aca_api_id" {
+variable "web_container_app_id" {
+  description = "Resource ID of the Web container app."
   type        = string
-  description = "Resource ID of the API Container App. RBAC scoped to this resource only."
 }
 
-variable "aca_environment_id" {
-  type = string
+variable "api_container_app_id" {
+  description = "Resource ID of the API container app."
+  type        = string
+}
+
+variable "resource_group_id" {
+  description = "Resource ID of the main resource group."
+  type        = string
 }
 
 variable "key_vault_id" {
-  type = string
-}
-
-variable "managed_identity_web_id" {
-  type = string
-}
-
-variable "managed_identity_api_id" {
-  type = string
-}
-
-# FIX: Resource group ID for scoped Reader assignment — not subscription scope.
-variable "resource_group_id" {
+  description = "Resource ID of the Key Vault."
   type        = string
-  description = "Resource ID of the deployment resource group. Reader is scoped here, not to the subscription."
 }
 
-variable "front_door_hostname" {
+variable "log_analytics_workspace_id" {
+  description = "Log Analytics workspace resource ID."
   type        = string
-  description = "Front Door endpoint hostname used in smoke tests (referenced via GitHub vars.FRONT_DOOR_HOSTNAME)."
+}
+
+variable "cicd_service_principal_object_id" {
+  description = "Object ID of the CI/CD service principal (from AAD). Must be a non-empty GUID."
+  type        = string
 
   validation {
-    condition     = length(var.front_door_hostname) > 0 && var.front_door_hostname != "placeholder.azurefd.net"
-    error_message = "front_door_hostname must be a real Front Door endpoint hostname, not a placeholder."
+    condition     = length(var.cicd_service_principal_object_id) > 0
+    error_message = "cicd_service_principal_object_id must be a non-empty AAD object ID (GUID)."
   }
 }

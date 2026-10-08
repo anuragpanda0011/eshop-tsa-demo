@@ -1,204 +1,49 @@
-# eShopOnWeb — Production-Grade Azure Cloud-Native Terraform
+# eShopOnWeb — Production-Grade Azure Terraform Infrastructure
 
-This repository contains a complete, production-grade Terraform project that provisions the
-target-state Azure cloud-native architecture for eShopOnWeb.
+This Terraform project provisions the complete production-grade cloud-native infrastructure
+for the **eShopOnWeb** reference application on Microsoft Azure, as described in the
+target-state architecture document.
 
 ---
 
 ## Architecture Overview
 
 ```
-Internet
-  │
-  ▼
-Azure DNS (Public Zone: contoso.com)
-  │
-  ▼
-Azure Front Door Premium (WAF + CDN + TLS offload)
-  │   OWASP CRS Microsoft_DefaultRuleSet 2.0 + BotManagerRuleSet 1.0, custom rate-limit rules
-  │   Static asset caching: /images/*, /css/*, /js/* (7-day TTL)
-  │
-  ├──► Azure Static Web Apps (BlazorAdmin WASM) — AAD auth enforced by Terraform
-  │
-  ▼
-Azure Container Apps Environment (cae-eshoponweb-prod)
-  │   Internal VNet ingress, Zone redundant, Consumption + Dedicated profiles
-  │   mTLS enabled at environment level (transport = "auto")
-  │
-  ├──► ca-web (MVC Storefront)  ←── User-Assigned Managed Identity (web)
-  │         min: 2, max: 20 replicas | CPU: 1.0 | RAM: 2Gi
-  │
-  └──► ca-api (PublicApi)       ←── User-Assigned Managed Identity (api)
-            min: 2, max: 15 replicas | CPU: 0.75 | RAM: 1.5Gi
-              │
-              ▼
-        Azure API Management (External VNet mode)
-        ←── Dedicated User-Assigned Managed Identity (apim) — separate from api MI
-        JWT validation (tenant-specific issuer + audience), rate-limiting, CORS
-        Subscription key enforcement enabled
-        IP-filter policy restricts to AzureFrontDoor.Backend (WAF bypass prevention)
-
-Azure Virtual Network (10.10.0.0/16)
-  ├── snet-aca-infra   10.10.0.0/23  (ACA environment infra)
-  ├── snet-aca-apps    10.10.2.0/23  (ACA workload pods)
-  ├── snet-pe          10.10.4.0/24  (Private Endpoints)
-  ├── snet-appgw       10.10.5.0/26  (Reserved - Application Gateway)
-  ├── snet-redis       10.10.6.0/27  (Redis)
-  ├── snet-agents      10.10.7.0/26  (GitHub Actions runners)
-  ├── AzureBastionSubnet 10.10.8.0/27
-  └── snet-apim        10.10.9.0/27  (API Management - External VNet mode)
-
-Private Endpoints (snet-pe):
-  ├── Azure SQL Server        → privatelink.database.windows.net
-  ├── Azure Cache for Redis   → privatelink.redis.cache.windows.net
-  ├── Azure Container Registry → privatelink.azurecr.io
-  ├── Azure Key Vault         → privatelink.vaultcore.azure.net
-  ├── Azure Blob Storage (Data Protection) → privatelink.blob.core.windows.net
-  ├── Azure Blob Storage (Audit)           → privatelink.blob.core.windows.net
-  └── Azure Blob Storage (LAW CMK)         → privatelink.blob.core.windows.net
-
-Data Layer:
-  ├── Azure SQL Database: catalogdb  (GP_Gen5_2, zone redundant, LTR 5yr, AAD-only auth)
-  ├── Azure SQL Database: identitydb (GP_Gen5_2, zone redundant, LTR 5yr, AAD-only auth)
-  └── Azure Cache for Redis C1 Standard (SSL-only, port 6379 NSG rule removed)
-
-Security:
-  ├── Azure Key Vault (Premium SKU, RBAC model, private endpoint, purge protection)
-  ├── User-Assigned Managed Identities (web, api, apim [dedicated], acr-pull)
-  ├── Key Vault Secrets: jwt-secret-key, sql connection strings, redis connection string
-  └── Key Vault Key: RSA 4096 for ASP.NET Data Protection ring (CMK on ALL storage accounts)
-
-Storage:
-  ├── Azure Blob Storage (Data Protection Keys, ZRS, versioning enabled, CMK encrypted, private endpoint)
-  ├── Azure Blob Storage (SQL Audit Logs, GRS, versioning enabled, CMK encrypted, private endpoint)
-  ├── Azure Blob Storage (LAW CMK, ZRS, versioning enabled, CMK encrypted, private endpoint)
-  └── Azure Blob Storage (NSG Flow Logs, ZRS, versioning enabled, CMK encrypted, no public access)
-
-Container Registry:
-  └── Azure Container Registry Premium
-      Geo-replicated, private endpoint, vulnerability scanning, content trust
-      No mutable :latest tags pushed by CI/CD
-
-Observability:
-  ├── Azure Log Analytics Workspace (≥90-day retention, CMK-linked storage, single instance)
-  ├── Azure Application Insights (workspace-based, distributed tracing, adaptive sampling,
-  │   local_authentication_disabled = true — key-based ingestion disabled)
-  ├── NSG Flow Logs (all NSGs) with Traffic Analytics
-  ├── NSG Diagnostic Settings (all NSGs) — NetworkSecurityGroupEvent + RuleCounter to LAW
-  ├── SQL Audit to immutable storage account (CMK) + Log Analytics
-  ├── Metric Alerts: CPU, Memory, SQL CPU, Redis memory, Availability, LAW DataCap
-  └── Custom Workbook dashboard
-
-CI/CD:
-  ├── Azure AD App with OIDC Federated Credentials (correct issuer URL)
-  ├── GitHub Actions workflow: build → test → security scan → push ACR → deploy ACA
-  │   All third-party actions pinned to immutable SHA digests
-  │   Only SHA-tagged images pushed — no mutable :latest tag
-  │   Workflow file written with 0600 permissions
-  └── RBAC: AcrPush, AcrImageSigner, Azure ContainerApps Contributor (per-app),
-      KV Secrets User, Reader scoped to resource group only (NOT subscription)
-
-Networking Security:
-  ├── Azure DDoS Network Protection (Standard) — attached directly to VNet resource
-  ├── Azure Bastion (Standard SKU, hardened NSG, shareable_link_enabled=false,
-  │   file_copy_enabled=false, tunneling_enabled=false) — zero-trust operator access
-  ├── NAT Gateway (zone-redundant, deterministic outbound IP for ACA)
-  └── NSGs on ALL subnets (including Bastion), flow logs enabled, CMK on flow-log storage
-      Diagnostic settings enabled on ALL NSGs (not just PE subnet)
-
-NSG Hardening:
-  ├── PE subnet: port-restricted (1433/6380/443 only from legitimate source subnets)
-  ├── Agents subnet: deny-all inbound (outbound-only runners)
-  ├── AppGW subnet: inbound 443 from AzureFrontDoor.Backend only (not Internet)
-  ├── APIM subnet: full required outbound rules + deny-all egress catch-all
-  └── Bastion subnet: outbound port 80 to Internet removed
+┌──────────────────────────────────────────────────────────────────┐
+│                    Azure Front Door Standard                      │
+│              WAF (OWASP 3.2) + CDN + TLS offload                 │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │ (internal FQDN origin)
+┌──────────────────────────────▼───────────────────────────────────┐
+│              Azure Container Apps Environment                      │
+│          (VNet-injected, internal load balancer only)             │
+│  ┌──────────────────┐          ┌──────────────────────────┐      │
+│  │  ca-web           │          │  ca-api                   │      │
+│  │  (MVC Storefront) │◄────────►│  (PublicApi / JWT)        │      │
+│  └──────────────────┘          └──────────────────────────┘      │
+└───────────────┬──────────────────────────┬───────────────────────┘
+                │ Private Endpoints         │
+    ┌───────────▼────────────┐  ┌──────────▼──────────────────┐
+    │  Azure SQL Database     │  │  Azure Cache for Redis       │
+    │  catalogdb / identitydb │  │  (Standard C1, TLS)         │
+    └─────────────────────────┘  └─────────────────────────────┘
+                │
+    ┌───────────▼────────────┐
+    │  Azure Key Vault        │
+    │  (RBAC, Private EP)     │
+    └─────────────────────────┘
 ```
 
----
+### Modules
 
-## Security Hardening Checklist
-
-- [x] All secrets stored in Key Vault — no secrets in code or environment variables
-- [x] Key Vault uses RBAC model (not legacy access policies)
-- [x] Key Vault Premium SKU — HSM-backed key operations
-- [x] Key Vault has private endpoint — no public network access
-- [x] Key Vault has lifecycle prevent_destroy = true
-- [x] SQL databases have private endpoints — public access disabled
-- [x] SQL AAD-only authentication (`azuread_authentication_only = true`)
-- [x] SQL admin credentials are internally generated throwaway values (not input variables)
-- [x] SQL databases have lifecycle prevent_destroy = true
-- [x] Redis has private endpoint — no public access, SSL-only (port 6379 NSG rule removed)
-- [x] Redis connection string: lifecycle.ignore_changes does NOT suppress value drift
-- [x] ACR Premium with private endpoint — admin login disabled — no :latest tag pushed
-- [x] Managed Identities for all service-to-service authentication
-- [x] APIM has a dedicated managed identity (separate from API Container App identity)
-- [x] APIM IP-filter policy restricts gateway to AzureFrontDoor.Backend (WAF bypass prevention)
-- [x] GitHub Actions uses OIDC (no long-lived secrets, correct issuer URL)
-- [x] All third-party GitHub Actions pinned to immutable SHA digests
-- [x] GitHub Actions Reader role scoped to resource group only (not subscription)
-- [x] Front Door WAF in Prevention mode with Microsoft_DefaultRuleSet 2.0 + BotManagerRuleSet (Premium SKU)
-- [x] DDoS Protection Standard enabled on VNet (single VNet resource, no duplicate)
-- [x] Azure Bastion for operator access — hardened NSG, shareable links disabled, file copy disabled
-- [x] NAT Gateway for zone-redundant deterministic outbound IP
-- [x] TLS 1.2 minimum enforced everywhere; APIM backend uses https://
-- [x] ACA transport = "auto" enabling mTLS at environment level
-- [x] Content Trust (image signing) enabled on ACR
-- [x] Vulnerability scanning on ACR images via Trivy in CI (pinned SHA)
-- [x] Data Protection keys in Blob + CMK-encrypted with Key Vault RSA 4096 key + private endpoint
-- [x] Audit storage account: CMK-encrypted, private endpoint, no public access, versioning enabled
-- [x] Flow-log storage account: CMK-encrypted, no public access, ZRS replication, versioning enabled
-- [x] LAW CMK storage account: CMK-encrypted, private endpoint, no public access, versioning enabled
-- [x] Soft delete and purge protection on Key Vault (90-day retention)
-- [x] APIM in External VNet mode — not publicly exposed without Front Door + IP filter policy
-- [x] APIM JWT validation with tenant-specific issuer and audience
-- [x] APIM subscription key enforcement enabled
-- [x] APIM NSG: required outbound rules + deny-all egress (External VNet mode compliant)
-- [x] NSG flow logs enabled for all NSGs with Traffic Analytics
-- [x] NSG diagnostic settings enabled for ALL NSGs (NetworkSecurityGroupEvent + RuleCounter)
-- [x] SQL auditing to immutable storage (CMK) + Log Analytics
-- [x] Container image tags validated — no mutable/floating tags accepted or pushed
-- [x] GitHub Actions SP uses Azure ContainerApps Contributor (not Contributor) on ACA resources
-- [x] GitHub Actions SP Reader scoped to resource group (not subscription)
-- [x] Web managed identity has Key Vault Crypto User (not Crypto Officer)
-- [x] ApplicationInsights connection string passed via KV secret reference, not plaintext env var
-- [x] Application Insights local_authentication_disabled = true (key-based ingestion disabled)
-- [x] instrumentation_key output removed (replaced by connection_string only)
-- [x] Log Analytics Workspace linked to CMK-encrypted storage (single workspace, no duplicate)
-- [x] Log Analytics Workspace has lifecycle prevent_destroy = true
-- [x] SQL server system MI granted Storage Blob Data Contributor on audit storage account
-- [x] PE subnet NSG: port-restricted to 1433/6380/443 from legitimate source subnets only
-- [x] Agents subnet NSG: deny-all inbound (runners are outbound-only)
-- [x] AppGW subnet NSG: inbound 443 from AzureFrontDoor.Backend (not Internet)
-- [x] GitHub Actions workflow file written with 0600 permissions
-- [x] Log retention validated ≥90 days in bootstrap module
-- [x] Application Insights adaptive sampling configured to prevent LAW quota breach
-- [x] Static Web App AAD authentication enforced by Terraform (not manual post-deploy)
-- [x] SQL connection string secrets have expiration_date set
-- [x] Front Door origin http_port not set to 80 (HTTPS-only origin)
-- [x] StorageDelete operations captured in all storage blob diagnostic settings
-
----
-
-## Module Structure
-
-```
-.
-├── main.tf
-├── variables.tf
-├── outputs.tf
-├── providers.tf
-├── versions.tf
-├── terraform.tfvars.example
-├── README.md
-└── modules/
-    ├── network/
-    ├── security/
-    ├── compute/
-    ├── database/
-    ├── monitoring/
-    ├── monitoring_bootstrap/
-    └── ci_cd/
-```
+| Module | Description |
+|--------|-------------|
+| `modules/network` | VNet, Subnets, NSGs, NAT Gateway, Azure Bastion, Private DNS Zones, Azure Front Door Standard + WAF, Azure API Management |
+| `modules/security` | Key Vault (RBAC), Managed Identities (Web + API + CI/CD), Data Protection Storage, GitHub Actions OIDC |
+| `modules/database` | Azure SQL Servers (Catalog + Identity DBs), Azure Cache for Redis, Private Endpoints, Key Vault secrets |
+| `modules/compute` | Azure Container Registry (Premium), Container Apps Environment (mTLS enabled), Container Apps (Web + API), Static Web Apps |
+| `modules/monitoring` | Log Analytics Workspace, Application Insights (workspace-based), Alert Rules, Action Groups, Availability Tests |
+| `modules/ci_cd` | GitHub Actions OIDC role assignments, ACR push/pull RBAC, generated workflow files |
 
 ---
 
@@ -207,120 +52,227 @@ NSG Hardening:
 | Tool | Minimum Version |
 |------|----------------|
 | Terraform | >= 1.7.0 |
-| Azure CLI | >= 2.60.0 |
-| Azure Provider | >= 3.117.0, < 3.118.0 |
-| Azure AD Provider | >= 2.53.0, < 2.54.0 |
-| Azure Subscription | Owner or Contributor + User Access Administrator |
+| Azure CLI | >= 2.58.0 |
+| GitHub CLI (optional) | >= 2.40.0 |
+| Docker | >= 24.0 |
+| .NET SDK | 8.0.x |
 
 ---
 
 ## Quick Start
 
-### 1. Configure backend state storage
+### 1. Clone and Configure
 
 ```bash
+git clone https://github.com/your-org/eShopOnWeb.git
+cd eShopOnWeb/infra/terraform
+
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with your real values
+```
+
+### 2. Set Up Azure Authentication
+
+```bash
+# Login to Azure
+az login
+
+# Set the subscription
+az account set --subscription "<your-subscription-id>"
+```
+
+### 3. Configure Remote State (required for production)
+
+```bash
+# Create a storage account for Terraform state — enable CMK in production
 az group create --name rg-tfstate --location eastus2
 az storage account create \
-  --name sttfstateeshoponweb \
+  --name steshoponwebtfstate \
   --resource-group rg-tfstate \
   --sku Standard_ZRS \
   --min-tls-version TLS1_2 \
   --allow-blob-public-access false
-az storage account blob-service-properties update \
-  --account-name sttfstateeshoponweb \
-  --enable-versioning true \
-  --enable-delete-retention true \
-  --delete-retention-days 30
+
 az storage container create \
   --name tfstate \
-  --account-name sttfstateeshoponweb
-# REQUIRED: Configure CMK encryption on state storage BEFORE first apply.
-# The Redis primary_access_key will be written to state — CMK + strict RBAC
-# are MANDATORY to protect it. This is a hard security requirement, not advisory.
-az storage account update \
-  --name sttfstateeshoponweb \
-  --resource-group rg-tfstate \
-  --encryption-key-source Microsoft.Keyvault \
-  --encryption-key-vault <kv-uri> \
-  --encryption-key-name <key-name>
+  --account-name steshoponwebtfstate
 
-# Restrict state container access to Terraform deployer identity only:
-az storage account update \
-  --name sttfstateeshoponweb \
-  --resource-group rg-tfstate \
-  --default-action Deny
-az role assignment create \
-  --role "Storage Blob Data Contributor" \
-  --assignee <terraform-sp-object-id> \
-  --scope /subscriptions/<sub-id>/resourceGroups/rg-tfstate/providers/Microsoft.Storage/storageAccounts/sttfstateeshoponweb
+# Add backend configuration to versions.tf:
+# backend "azurerm" {
+#   resource_group_name  = "rg-tfstate"
+#   storage_account_name = "steshoponwebtfstate"
+#   container_name       = "tfstate"
+#   key                  = "prod/eshoponweb.tfstate"
+#   use_oidc             = true
+# }
 ```
 
-### 2. Configure variables
+> **Security note**: The Terraform state file contains sensitive values (Redis access key,
+> SQL password, App Insights connection string). The backend storage account MUST have:
+> - Customer-Managed Key (CMK) encryption enabled
+> - Private endpoint and public access disabled
+> - RBAC access restricted to the CI/CD service principal only
+> - Soft-delete and versioning enabled
+
+### 4. Set Required Secrets
+
+Before deploying, set these secrets in your CI/CD pipeline or environment:
+
+| Variable | Description | Secret |
+|----------|-------------|--------|
+| `TF_VAR_sql_admin_password` | SQL admin password | ✅ |
+| `TF_VAR_jwt_secret_key_value` | Initial JWT signing key | ✅ |
+| `TF_VAR_health_probe_token` | Health probe shared token | ✅ |
+
+### 5. Deploy Infrastructure
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars — NEVER commit this file
+# Initialise Terraform
+terraform init
+
+# Validate configuration
+terraform validate
+
+# Preview changes
+terraform plan -out=tfplan
+
+# Apply infrastructure
+terraform apply tfplan
 ```
 
-### 3. Deploy
+### 6. Post-Deploy: Inject Redis Credential into Key Vault
+
+After the initial apply, the Redis connection string in Key Vault contains only the
+hostname and port. The CI/CD pipeline must inject the access key:
 
 ```bash
-az login && az account set --subscription "<your-subscription-id>"
-terraform init \
-  -backend-config="resource_group_name=rg-tfstate" \
-  -backend-config="storage_account_name=sttfstateeshoponweb" \
-  -backend-config="container_name=tfstate" \
-  -backend-config="key=eshoponweb/prod.tfstate"
-terraform validate && terraform plan -out=tfplan && terraform apply tfplan
+REDIS_HOST=$(terraform output -raw redis_hostname)
+REDIS_PORT=$(terraform output -raw redis_ssl_port)
+KV_NAME=$(terraform output -raw key_vault_name)
+
+# Get Redis key (requires Key Vault Secrets Officer)
+REDIS_KEY=$(az redis list-keys \
+  --name "redis-eshoponweb-prod" \
+  --resource-group "rg-eshoponweb-prod" \
+  --query primaryKey -o tsv)
+
+az keyvault secret set \
+  --vault-name "$KV_NAME" \
+  --name "RedisConnectionString" \
+  --value "${REDIS_HOST}:${REDIS_PORT},password=${REDIS_KEY},ssl=True,abortConnect=False"
 ```
 
-### 4. Two-phase apply (Front Door / ACA dependency)
+### 7. Update GitHub Actions Secrets
 
-On first apply, the ACA web FQDN is not yet known. Use:
+After deploying, set these secrets in your GitHub repository
+(**Settings → Secrets and variables → Actions**):
+
+| Secret Name | Value Source |
+|-------------|-------------|
+| `AZURE_CLIENT_ID` | Output: `cicd_service_principal_client_id` from security module |
+| `AZURE_TENANT_ID` | Your Azure AD Tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Your Azure Subscription ID |
+
+### 8. Configure Container Images
+
 ```bash
-terraform apply -target=module.monitoring_bootstrap -target=module.network -target=module.security
-terraform apply -target=module.database -target=module.compute
-terraform apply  # full apply to wire Front Door origin and monitoring health check
+# Login to ACR
+ACR=$(terraform output -raw acr_login_server)
+az acr login --name $ACR
+
+# Build and push Web image
+docker build -t $ACR/web:latest -f src/Web/Dockerfile .
+docker push $ACR/web:latest
+
+# Build and push API image
+docker build -t $ACR/publicapi:latest -f src/PublicApi/Dockerfile .
+docker push $ACR/publicapi:latest
 ```
 
 ---
 
-## Important Post-Deployment Steps
+## Security Considerations
 
-### Redis key rotation (MANDATORY)
-The Redis `primary_access_key` is stored in Terraform state. After deployment:
-1. State backend MUST use CMK encryption and strict RBAC (enforced before first apply — see Quick Start)
-2. Immediately rotate the Redis key via Azure portal or CLI:
-   ```bash
-   az redis regenerate-keys --name <redis-name> --resource-group <rg> --key-type Primary
-   ```
-3. Update the Key Vault secret `redis-connection-string` with the new key:
-   ```bash
-   NEW_KEY=$(az redis list-keys --name <redis-name> --resource-group <rg> --query primaryKey -o tsv)
-   az keyvault secret set \
-     --vault-name <kv-name> \
-     --name redis-connection-string \
-     --value "<hostname>:<ssl_port>,password=${NEW_KEY},ssl=True,abortConnect=False"
-   ```
-4. Restart affected Container Apps to pick up the new connection string
-5. On next `terraform apply`, Terraform will update the KV secret value to match the current
-   `azurerm_redis_cache.primary_access_key` (lifecycle.ignore_changes on value has been REMOVED)
+### Secrets Management
 
-### Static Web App AAD Authentication
-AAD authentication is now configured by Terraform via `azurerm_static_web_app_auth_settings_v2`.
-You must supply `swa_aad_client_id` and `swa_aad_client_secret` variables referencing an
-Azure AD App Registration with the SWA redirect URI configured:
+All secrets are stored in Azure Key Vault. No secrets should ever be committed to source control:
+
+- SQL connection strings → Key Vault secrets (Managed Identity auth, no passwords in connection strings)
+- Redis connection string → Key Vault secret (access key injected post-deploy by CI/CD)
+- JWT signing key → Key Vault secret (rotate via CI/CD pipeline)
+- Application Insights connection string → Key Vault secret
+- Data Protection storage → Managed Identity blob access (no storage key stored)
+
+### Network Security
+
+- All PaaS services accessible only via private endpoints
+- SQL servers have `public_network_access_enabled = false` and Entra-only authentication
+- Key Vault has `public_network_access_enabled = false`
+- ACR has public access disabled
+- Container Apps Environment uses internal load balancer only with mTLS enabled
+- Front Door is the sole public ingress point (HTTPS only)
+- APIM validates `X-Azure-FDID` header to ensure all traffic transits Front Door
+
+### Identity
+
+- All service-to-service authentication uses Managed Identities (RBAC)
+- GitHub Actions uses OIDC (no long-lived credentials)
+- SQL Server Entra-only authentication enforced (`azuread_authentication_only = true`)
+- No access policies on Key Vault — RBAC only
+- Separate KMS keys for storage CMK and application Data Protection
+
+---
+
+## Estimated Azure Costs (Monthly)
+
+| Service | SKU | Estimated Cost |
+|---------|-----|----------------|
+| Container Apps Environment | Consumption + D4 dedicated | ~$350 |
+| Azure SQL Database (×2) | GP_Gen5_2 | ~$300 |
+| Azure Cache for Redis | Standard C1 | ~$55 |
+| Azure Front Door Standard | Standard | ~$35 |
+| Azure Container Registry | Premium | ~$50 |
+| Azure Key Vault | Standard | ~$5 |
+| Log Analytics Workspace | PerGB2018 (estimated 10 GB/day) | ~$230 |
+| Application Insights | Workspace-based | Included in LA |
+| Azure Bastion | Standard | ~$140 |
+| API Management | Developer | ~$50 |
+| Static Web Apps | Standard | ~$9 |
+| NAT Gateway | Standard | ~$32 |
+| **Total** | | **~$1,256/month** |
+
+*Costs are estimates only. Actual costs depend on traffic, storage, and retention policies.*
+
+---
+
+## Terraform State Management
+
+For production use, configure remote state in Azure Blob Storage with CMK encryption.
+Add to `versions.tf`:
+
+```hcl
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "rg-tfstate"
+    storage_account_name = "steshoponwebtfstate"
+    container_name       = "tfstate"
+    key                  = "prod/eshoponweb.tfstate"
+    use_oidc             = true
+  }
+}
 ```
-https://<swa-default-hostname>/.auth/login/aad/callback
-```
 
-### Configure GitHub Actions secrets/variables
+---
 
-| Secret Name | Value |
-|-------------|-------|
-| `AZURE_CLIENT_ID` | `terraform output -raw github_actions_client_id` |
-| `AZURE_TENANT_ID` | Your Azure AD tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Your Azure subscription ID |
-| `SWA_DEPLOYMENT_TOKEN` | From Azure portal → Static Web App → Manage deployment token |
+## Contributing
 
-Move `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` to GitHub Actions **repository variables** (not secrets) for the generated workflow to reference via `vars.` context.
+1. All infrastructure changes must go through pull requests
+2. `terraform fmt` and `terraform validate` must pass (enforced in PR workflow)
+3. `terraform plan` output must be reviewed before merge
+4. Security-sensitive changes require two approvals
+
+---
+
+## License
+
+MIT License — see root `LICENSE` file for details.

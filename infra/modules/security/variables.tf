@@ -1,60 +1,56 @@
 variable "resource_group_name" {
-  type = string
+  description = "Name of the resource group."
+  type        = string
 }
 
 variable "location" {
-  type = string
+  description = "Azure region."
+  type        = string
 }
 
 variable "project" {
-  type = string
+  description = "Project name for naming."
+  type        = string
 }
 
 variable "environment" {
-  type = string
+  description = "Environment name for naming."
+  type        = string
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
-}
-
-variable "subnet_pe_id" {
-  type        = string
-  description = "Subnet ID for private endpoints."
-}
-
-variable "vnet_id" {
-  type        = string
-  description = "Virtual network resource ID."
+  description = "Resource tags."
+  type        = map(string)
+  default     = {}
 }
 
 variable "log_analytics_workspace_id" {
+  description = "Log Analytics workspace resource ID for diagnostic settings."
   type        = string
-  description = "Log Analytics Workspace resource ID for diagnostic settings."
 }
 
-variable "tenant_id" {
+variable "private_endpoint_subnet_id" {
+  description = "Subnet ID for private endpoints."
   type        = string
-  description = "Azure Active Directory tenant ID."
 }
 
-variable "current_object_id" {
+variable "vnet_id" {
+  description = "VNet resource ID."
   type        = string
-  description = "Object ID of the current deploying principal (Terraform SP or user)."
 }
 
-variable "private_dns_zone_keyvault_id" {
+variable "github_org" {
+  description = "GitHub organisation for OIDC."
   type        = string
-  description = "Resource ID of the Key Vault private DNS zone (from network module)."
 }
 
-variable "private_dns_zone_blob_id" {
+variable "github_repo" {
+  description = "GitHub repository for OIDC."
   type        = string
-  description = "Resource ID of the blob storage private DNS zone (from network module), used for audit storage private endpoint."
 }
 
-variable "subscription_id" {
+variable "jwt_secret_key_value" {
+  description = "Initial JWT signing key value to store in Key Vault. Must be supplied as a pipeline secret — never hardcode. Rotate immediately post-deploy."
   type        = string
-  description = "Azure Subscription ID, used for constructing scope references."
+  sensitive   = true
 }

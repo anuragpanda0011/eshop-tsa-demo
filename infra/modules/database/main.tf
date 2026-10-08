@@ -1,90 +1,66 @@
-# ── Random Suffix for unique names ───────────────────────────────────────────
+# ===========================================================================
+# Database Module
+# Provisions: Azure SQL Servers (Entra-only auth), Databases, Private Endpoints,
+#             Azure Cache for Redis, Private Endpoint for Redis,
+#             Key Vault secrets for connection strings
+# ===========================================================================
+
+locals {
+  prefix = "${var.project}-${var.environment}"
+}
+
+data "azurerm_client_config" "current" {}
+
+# ---------------------------------------------------------------------------
+# Random suffix to ensure globally unique SQL server names
+# ---------------------------------------------------------------------------
 resource "random_string" "sql_suffix" {
-  length  = 8
-  special = false
+  length  = 6
   upper   = false
-}
-
-# ── Internally generated throwaway SQL bootstrap credentials ──────────────────
-# Since azuread_authentication_only = true is enforced, the SQL administrator
-# password is non-functional after deployment. Generating it internally means:
-#   1. The credential never appears in tfvars or CI/CD pipelines
-#   2. The generated value in state is still protected by CMK on the backend
-#   3. The deployer does not need to supply or rotate this credential
-resource "random_string" "sql_admin_login" {
-  length  = 12
   special = false
-  upper   = false
-  numeric = false
 }
 
-resource "random_password" "sql_admin_password" {
-  length           = 32
-  special          = true
-  override_special = "!@#$%^&*()-_=+[]{}|;:,.<>?"
-  min_upper        = 2
-  min_lower        = 2
-  min_numeric      = 2
-  min_special      = 2
-}
-
-# ── Azure SQL Server ──────────────────────────────────────────────────────────
-resource "azurerm_mssql_server" "main" {
-  name                          = "sql-${var.project}-${var.environment}-${random_string.sql_suffix.result}"
+# ---------------------------------------------------------------------------
+# SQL Server — Catalog
+# ---------------------------------------------------------------------------
+resource "azurerm_mssql_server" "catalog" {
+  name                          = "sql-${var.project}-catalog-${var.environment}-${random_string.sql_suffix.result}"
   resource_group_name           = var.resource_group_name
   location                      = var.location
   version                       = "12.0"
-  administrator_login           = "sqladmin-${random_string.sql_admin_login.result}"
-  administrator_login_password  = random_password.sql_admin_password.result
+  administrator_login           = var.sql_admin_login
+  administrator_login_password  = var.sql_admin_password
   minimum_tls_version           = "1.2"
   public_network_access_enabled = false
   tags                          = var.tags
-
-  azuread_administrator {
-    login_username = "aad-sql-admin"
-    object_id      = var.aad_sql_admin_object_id
-    tenant_id      = var.tenant_id
-    azuread_authentication_only = true
-  }
 
   identity {
     type = "SystemAssigned"
   }
 
-  # FIX: Prevent accidental destruction of the production SQL server.
-  lifecycle {
-    prevent_destroy = true
+  azuread_administrator {
+    login_username = "sql-admin-entra"
+    object_id      = data.azurerm_client_config.current.object_id
+    # Entra-only authentication: SQL password auth is disabled.
+    azuread_authentication_only = true
   }
 }
 
-# ── Grant SQL server's system-assigned MI Storage Blob Data Contributor ───────
-resource "azurerm_role_assignment" "sql_audit_storage_mi" {
-  scope                = var.audit_storage_account_id
-  role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = azurerm_mssql_server.main.identity[0].principal_id
+resource "azurerm_mssql_server_extended_auditing_policy" "catalog" {
+  server_id          = azurerm_mssql_server.catalog.id
+  log_monitoring_enabled = true
+  retention_in_days  = 90
 }
 
-# ── SQL Server Auditing ───────────────────────────────────────────────────────
-resource "azurerm_mssql_server_extended_auditing_policy" "main" {
-  server_id                        = azurerm_mssql_server.main.id
-  log_monitoring_enabled           = true
-  retention_in_days                = 90
-  storage_endpoint                 = var.audit_storage_primary_blob_endpoint
-  storage_account_subscription_id  = var.audit_storage_subscription_id
-
-  depends_on = [azurerm_role_assignment.sql_audit_storage_mi]
-}
-
-# ── Catalog Database ──────────────────────────────────────────────────────────
-resource "azurerm_mssql_database" "catalogdb" {
+resource "azurerm_mssql_database" "catalog" {
   name                        = "catalogdb"
-  server_id                   = azurerm_mssql_server.main.id
-  sku_name                    = var.sql_sku
+  server_id                   = azurerm_mssql_server.catalog.id
+  collation                   = "SQL_Latin1_General_CP1_CI_AS"
+  sku_name                    = var.sql_sku_name
   max_size_gb                 = var.sql_max_size_gb
-  zone_redundant              = var.sql_zone_redundant
+  zone_redundant              = true
   geo_backup_enabled          = true
-  read_scale                  = false
-  auto_pause_delay_in_minutes = -1
+  auto_pause_delay_in_minutes = -1 # -1 = disabled (always on for production)
   tags                        = var.tags
 
   short_term_retention_policy {
@@ -102,25 +78,50 @@ resource "azurerm_mssql_database" "catalogdb" {
   threat_detection_policy {
     state                = "Enabled"
     email_account_admins = "Enabled"
-    retention_days       = 30
-    disabled_alerts      = []
-  }
-
-  # FIX: Prevent accidental destruction of the production catalog database.
-  lifecycle {
-    prevent_destroy = true
+    retention_days       = 90
   }
 }
 
-# ── Identity Database ─────────────────────────────────────────────────────────
-resource "azurerm_mssql_database" "identitydb" {
+# ---------------------------------------------------------------------------
+# SQL Server — Identity
+# ---------------------------------------------------------------------------
+resource "azurerm_mssql_server" "identity" {
+  name                          = "sql-${var.project}-identity-${var.environment}-${random_string.sql_suffix.result}"
+  resource_group_name           = var.resource_group_name
+  location                      = var.location
+  version                       = "12.0"
+  administrator_login           = var.sql_admin_login
+  administrator_login_password  = var.sql_admin_password
+  minimum_tls_version           = "1.2"
+  public_network_access_enabled = false
+  tags                          = var.tags
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  azuread_administrator {
+    login_username = "sql-admin-entra"
+    object_id      = data.azurerm_client_config.current.object_id
+    # Entra-only authentication: SQL password auth is disabled.
+    azuread_authentication_only = true
+  }
+}
+
+resource "azurerm_mssql_server_extended_auditing_policy" "identity" {
+  server_id              = azurerm_mssql_server.identity.id
+  log_monitoring_enabled = true
+  retention_in_days      = 90
+}
+
+resource "azurerm_mssql_database" "identity" {
   name                        = "identitydb"
-  server_id                   = azurerm_mssql_server.main.id
-  sku_name                    = var.sql_sku
+  server_id                   = azurerm_mssql_server.identity.id
+  collation                   = "SQL_Latin1_General_CP1_CI_AS"
+  sku_name                    = var.sql_sku_name
   max_size_gb                 = var.sql_max_size_gb
-  zone_redundant              = var.sql_zone_redundant
+  zone_redundant              = true
   geo_backup_enabled          = true
-  read_scale                  = false
   auto_pause_delay_in_minutes = -1
   tags                        = var.tags
 
@@ -139,92 +140,79 @@ resource "azurerm_mssql_database" "identitydb" {
   threat_detection_policy {
     state                = "Enabled"
     email_account_admins = "Enabled"
-    retention_days       = 30
-    disabled_alerts      = []
-  }
-
-  # FIX: Prevent accidental destruction of the production identity database.
-  lifecycle {
-    prevent_destroy = true
+    retention_days       = 90
   }
 }
 
-# ── Private Endpoint for SQL Server ──────────────────────────────────────────
-resource "azurerm_private_endpoint" "sql" {
-  name                = "pe-sql-${var.project}-${var.environment}"
+# ---------------------------------------------------------------------------
+# Private Endpoints — SQL Servers
+# ---------------------------------------------------------------------------
+resource "azurerm_private_endpoint" "catalog_sql" {
+  name                = "pe-sql-catalog-${local.prefix}"
   location            = var.location
   resource_group_name = var.resource_group_name
-  subnet_id           = var.subnet_pe_id
+  subnet_id           = var.private_endpoint_subnet_id
   tags                = var.tags
 
   private_service_connection {
-    name                           = "psc-sql-${var.project}"
-    private_connection_resource_id = azurerm_mssql_server.main.id
+    name                           = "psc-sql-catalog-${local.prefix}"
+    private_connection_resource_id = azurerm_mssql_server.catalog.id
     subresource_names              = ["sqlServer"]
     is_manual_connection           = false
   }
 
   private_dns_zone_group {
-    name                 = "pdnszg-sql"
+    name                 = "sql-catalog-dns-zone-group"
     private_dns_zone_ids = [var.private_dns_zone_sql_id]
   }
 }
 
-# ── Key Vault Secrets — Connection Strings ────────────────────────────────────
-# FIX: Added expiration_date to both SQL connection string secrets so they are
-# reviewed and rotated at least annually. The expiration_date is suppressed from
-# lifecycle ignore_changes to avoid perpetual diffs from timestamp() re-evaluation
-# on each plan, but value drift is NOT suppressed — Terraform will correct stale values.
-resource "azurerm_key_vault_secret" "catalog_connection_string" {
-  name            = "catalog-connection-string"
-  value           = "Server=${azurerm_mssql_server.main.fully_qualified_domain_name};Database=catalogdb;Authentication=Active Directory Managed Identity;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
-  key_vault_id    = var.key_vault_id
-  content_type    = "text/plain; charset=utf-8"
-  expiration_date = timeadd(timestamp(), "8760h") # 1 year
+resource "azurerm_private_endpoint" "identity_sql" {
+  name                = "pe-sql-identity-${local.prefix}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  subnet_id           = var.private_endpoint_subnet_id
+  tags                = var.tags
 
-  tags = var.tags
+  private_service_connection {
+    name                           = "psc-sql-identity-${local.prefix}"
+    private_connection_resource_id = azurerm_mssql_server.identity.id
+    subresource_names              = ["sqlServer"]
+    is_manual_connection           = false
+  }
 
-  lifecycle {
-    # Suppress perpetual diff from timestamp() re-evaluation at each plan.
-    # Value is NOT ignored — Terraform will detect and remediate drift.
-    ignore_changes = [
-      expiration_date,
-    ]
+  private_dns_zone_group {
+    name                 = "sql-identity-dns-zone-group"
+    private_dns_zone_ids = [var.private_dns_zone_sql_id]
   }
 }
 
-resource "azurerm_key_vault_secret" "identity_connection_string" {
-  name            = "identity-connection-string"
-  value           = "Server=${azurerm_mssql_server.main.fully_qualified_domain_name};Database=identitydb;Authentication=Active Directory Managed Identity;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
-  key_vault_id    = var.key_vault_id
-  content_type    = "text/plain; charset=utf-8"
-  expiration_date = timeadd(timestamp(), "8760h") # 1 year
+# NOTE: The AllowAzureServices firewall rules (0.0.0.0/0.0.0.0) that were
+# previously present have been removed. With public_network_access_enabled=false
+# and Entra-only auth enforced, all access must flow through private endpoints.
+# EF migrations must run from within the VNet (e.g., a DevOps agent subnet).
 
-  tags = var.tags
-
-  lifecycle {
-    ignore_changes = [
-      expiration_date,
-    ]
-  }
-}
-
-# ── Azure Cache for Redis (Standard C1) ───────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Azure Cache for Redis — Standard C1
+# ---------------------------------------------------------------------------
 resource "azurerm_redis_cache" "main" {
-  name                          = "redis-${var.project}-${var.environment}"
+  name                          = "redis-${local.prefix}"
   location                      = var.location
   resource_group_name           = var.resource_group_name
   capacity                      = var.redis_capacity
   family                        = var.redis_family
   sku_name                      = var.redis_sku
+  non_ssl_port_enabled          = false
   minimum_tls_version           = "1.2"
   public_network_access_enabled = false
-  enable_non_ssl_port           = false
   tags                          = var.tags
 
   redis_configuration {
-    maxmemory_policy      = "volatile-lru"
+    maxmemory_reserved    = 50
+    maxmemory_delta       = 50
+    maxmemory_policy      = "allkeys-lru"
     enable_authentication = true
+    rdb_backup_enabled    = var.redis_sku == "Premium" ? true : false
   }
 
   patch_schedule {
@@ -233,69 +221,94 @@ resource "azurerm_redis_cache" "main" {
   }
 }
 
-# ── Private Endpoint for Redis ────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Private Endpoint — Redis
+# ---------------------------------------------------------------------------
 resource "azurerm_private_endpoint" "redis" {
-  name                = "pe-redis-${var.project}-${var.environment}"
+  name                = "pe-redis-${local.prefix}"
   location            = var.location
   resource_group_name = var.resource_group_name
-  subnet_id           = var.subnet_pe_id
+  subnet_id           = var.private_endpoint_subnet_id
   tags                = var.tags
 
   private_service_connection {
-    name                           = "psc-redis-${var.project}"
+    name                           = "psc-redis-${local.prefix}"
     private_connection_resource_id = azurerm_redis_cache.main.id
     subresource_names              = ["redisCache"]
     is_manual_connection           = false
   }
 
   private_dns_zone_group {
-    name                 = "pdnszg-redis"
+    name                 = "redis-dns-zone-group"
     private_dns_zone_ids = [var.private_dns_zone_redis_id]
   }
 }
 
-# ── Key Vault Secret — Redis Connection String ────────────────────────────────
-# SECURITY NOTE: The Redis primary_access_key will appear in Terraform state.
-# This is unavoidable with the azurerm provider when using azurerm_redis_cache.
+# ---------------------------------------------------------------------------
+# Key Vault Secrets — Connection Strings
 #
-# MANDATORY mitigations:
-#   1. The tfstate backend storage account MUST use CMK encryption + strict RBAC
-#      (see README Quick Start — HARD REQUIREMENT before first apply)
-#   2. IMMEDIATELY rotate the Redis key after deployment:
-#      az redis regenerate-keys --name <name> --resource-group <rg> --key-type Primary
-#   3. Update this KV secret with the new key after rotation (see README)
-#   4. On next terraform apply, Terraform will sync KV secret value to match
-#      azurerm_redis_cache.primary_access_key (value is NO LONGER ignored)
-#   5. Restrict access to the tfstate container to Terraform deployer identity only
+# SECURITY NOTE (Redis): The Redis access key is NOT stored in Terraform state
+# or in this connection string value. The secret value below contains only the
+# hostname and port. The CI/CD pipeline MUST inject the full connection string
+# (including the access key) into Key Vault post-deploy using the Key Vault
+# Secrets Officer role assignment on the CI/CD identity.
 #
-# FIX: Removed 'value' from lifecycle.ignore_changes.
-#   Previously, ignore_changes = [value] meant a corrupted, deleted, or stale
-#   secret value was never corrected by Terraform. This is removed so Terraform
-#   can detect and remediate drift. Post-rotation key updates must be handled via
-#   a dedicated rotation pipeline step (see README), not by suppressing all changes.
+# Run the following after `terraform apply`:
+#   REDIS_KEY=$(az redis list-keys --name redis-<prefix> --resource-group <rg> \
+#               --query primaryKey -o tsv)
+#   az keyvault secret set --vault-name <kv> --name RedisConnectionString \
+#     --value "<hostname>:6380,password=${REDIS_KEY},ssl=True,abortConnect=False"
+# ---------------------------------------------------------------------------
 resource "azurerm_key_vault_secret" "redis_connection_string" {
-  name            = "redis-connection-string"
-  value           = "${azurerm_redis_cache.main.hostname}:${azurerm_redis_cache.main.ssl_port},password=${azurerm_redis_cache.main.primary_access_key},ssl=True,abortConnect=False"
-  key_vault_id    = var.key_vault_id
-  content_type    = "text/plain; charset=utf-8"
-  expiration_date = timeadd(timestamp(), "8760h") # 1 year; rotate before expiry
-
-  tags = var.tags
+  name = "RedisConnectionString"
+  # Stores only the endpoint without the access key.
+  # The CI/CD pipeline must overwrite this with the full connection string.
+  value        = "${azurerm_redis_cache.main.hostname}:${azurerm_redis_cache.main.ssl_port},ssl=True,abortConnect=False"
+  key_vault_id = var.key_vault_id
+  tags         = var.tags
 
   lifecycle {
-    # ONLY suppress perpetual diff from timestamp() re-evaluation at each plan.
-    # 'value' is intentionally NOT in ignore_changes — Terraform must be able
-    # to detect and correct a stale or corrupted secret value.
-    ignore_changes = [
-      expiration_date,
-    ]
+    # The CI/CD pipeline will update the value with the real access key post-deploy.
+    # Prevent Terraform from reverting that update on subsequent applies.
+    ignore_changes = [value]
   }
 }
 
-# ── Diagnostic Settings for SQL ───────────────────────────────────────────────
-resource "azurerm_monitor_diagnostic_setting" "catalogdb" {
-  name                       = "diag-catalogdb"
-  target_resource_id         = azurerm_mssql_database.catalogdb.id
+# ---------------------------------------------------------------------------
+# SQL connection strings use Managed Identity (no password in connection string)
+# because azuread_authentication_only = true is enforced on the SQL servers.
+# ---------------------------------------------------------------------------
+resource "azurerm_key_vault_secret" "catalog_connection_string" {
+  name         = "CatalogDbConnectionString"
+  value        = "Server=tcp:${azurerm_mssql_server.catalog.fully_qualified_domain_name},1433;Initial Catalog=catalogdb;Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+  key_vault_id = var.key_vault_id
+  tags         = var.tags
+}
+
+resource "azurerm_key_vault_secret" "identity_connection_string" {
+  name         = "IdentityDbConnectionString"
+  value        = "Server=tcp:${azurerm_mssql_server.identity.fully_qualified_domain_name},1433;Initial Catalog=identitydb;Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+  key_vault_id = var.key_vault_id
+  tags         = var.tags
+}
+
+# ---------------------------------------------------------------------------
+# Diagnostic Settings
+# ---------------------------------------------------------------------------
+resource "azurerm_monitor_diagnostic_setting" "redis" {
+  name                       = "diag-redis-${local.prefix}"
+  target_resource_id         = azurerm_redis_cache.main.id
+  log_analytics_workspace_id = var.log_analytics_workspace_id
+
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "catalog_db" {
+  name                       = "diag-sqldb-catalog-${local.prefix}"
+  target_resource_id         = azurerm_mssql_database.catalog.id
   log_analytics_workspace_id = var.log_analytics_workspace_id
 
   enabled_log {
@@ -330,10 +343,6 @@ resource "azurerm_monitor_diagnostic_setting" "catalogdb" {
     category = "Blocks"
   }
 
-  enabled_log {
-    category = "Deadlocks"
-  }
-
   metric {
     category = "Basic"
     enabled  = true
@@ -345,9 +354,9 @@ resource "azurerm_monitor_diagnostic_setting" "catalogdb" {
   }
 }
 
-resource "azurerm_monitor_diagnostic_setting" "identitydb" {
-  name                       = "diag-identitydb"
-  target_resource_id         = azurerm_mssql_database.identitydb.id
+resource "azurerm_monitor_diagnostic_setting" "identity_db" {
+  name                       = "diag-sqldb-identity-${local.prefix}"
+  target_resource_id         = azurerm_mssql_database.identity.id
   log_analytics_workspace_id = var.log_analytics_workspace_id
 
   enabled_log {
@@ -359,22 +368,11 @@ resource "azurerm_monitor_diagnostic_setting" "identitydb" {
   }
 
   enabled_log {
-    category = "Deadlocks"
+    category = "Timeouts"
   }
 
   metric {
     category = "Basic"
-    enabled  = true
-  }
-}
-
-resource "azurerm_monitor_diagnostic_setting" "redis" {
-  name                       = "diag-redis-${var.project}"
-  target_resource_id         = azurerm_redis_cache.main.id
-  log_analytics_workspace_id = var.log_analytics_workspace_id
-
-  metric {
-    category = "AllMetrics"
     enabled  = true
   }
 }

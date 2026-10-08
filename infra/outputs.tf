@@ -1,90 +1,95 @@
 output "resource_group_name" {
-  value       = azurerm_resource_group.main.name
   description = "Name of the primary resource group."
+  value       = azurerm_resource_group.main.name
 }
 
 output "vnet_id" {
+  description = "Resource ID of the primary virtual network."
   value       = module.network.vnet_id
-  description = "Resource ID of the primary Virtual Network."
 }
 
 output "acr_login_server" {
+  description = "Login server URL for the Azure Container Registry."
   value       = module.compute.acr_login_server
-  description = "Azure Container Registry login server FQDN."
 }
 
-output "aca_web_fqdn" {
-  value       = module.compute.aca_web_fqdn
-  description = "Internal FQDN of the Web Container App."
+output "web_container_app_fqdn" {
+  description = "FQDN of the Web container app."
+  value       = module.compute.web_fqdn
 }
 
-output "aca_api_fqdn" {
-  value       = module.compute.aca_api_fqdn
-  description = "Internal FQDN of the API Container App."
+output "api_container_app_fqdn" {
+  description = "FQDN of the API container app."
+  value       = module.compute.api_fqdn
+}
+
+output "front_door_endpoint" {
+  description = "Azure Front Door endpoint hostname."
+  value       = module.network.front_door_endpoint_host
+}
+
+output "front_door_profile_resource_guid" {
+  description = "Resource GUID of the Front Door profile. Use this value as var.front_door_profile_resource_guid on subsequent applies to populate the APIM header validation policy."
+  value       = module.network.front_door_profile_resource_guid
+}
+
+output "key_vault_name" {
+  description = "Name of the Azure Key Vault."
+  value       = module.security.key_vault_name
 }
 
 output "key_vault_uri" {
-  value       = module.security.key_vault_uri
   description = "URI of the Azure Key Vault."
+  value       = module.security.key_vault_uri
 }
 
 output "app_insights_connection_string" {
+  description = "Application Insights connection string (sensitive)."
   value       = module.monitoring.app_insights_connection_string
   sensitive   = true
-  description = "Application Insights connection string. Use this for AAD-authenticated ingestion. instrumentation_key output has been removed."
-}
-
-output "front_door_endpoint_hostname" {
-  value       = module.network.front_door_endpoint_hostname
-  description = "Azure Front Door endpoint hostname."
 }
 
 output "static_web_app_url" {
+  description = "Default hostname of the Azure Static Web App."
   value       = module.compute.static_web_app_url
-  description = "URL of the Azure Static Web App (BlazorAdmin) — AAD authentication enforced by Terraform."
 }
 
-output "static_web_app_id" {
-  value       = module.compute.static_web_app_id
-  description = "Resource ID of the Azure Static Web App."
+output "log_analytics_workspace_id" {
+  description = "Resource ID of the Log Analytics workspace."
+  value       = module.monitoring.log_analytics_workspace_id
 }
 
-output "sql_server_fqdn" {
-  value       = module.database.sql_server_fqdn
-  description = "FQDN of the Azure SQL Server."
+output "web_managed_identity_client_id" {
+  description = "Client ID of the Web user-assigned managed identity."
+  value       = module.security.web_managed_identity_client_id
+}
+
+output "api_managed_identity_client_id" {
+  description = "Client ID of the API user-assigned managed identity."
+  value       = module.security.api_managed_identity_client_id
+}
+
+output "cicd_service_principal_client_id" {
+  description = "Client ID of the CI/CD OIDC service principal."
+  value       = module.security.cicd_service_principal_client_id
+}
+
+output "catalog_db_fqdn" {
+  description = "FQDN of the catalog SQL server."
+  value       = module.database.catalog_server_fqdn
+}
+
+output "identity_db_fqdn" {
+  description = "FQDN of the identity SQL server."
+  value       = module.database.identity_server_fqdn
 }
 
 output "redis_hostname" {
+  description = "Hostname of the Redis cache (for post-deploy key injection)."
   value       = module.database.redis_hostname
-  description = "Hostname of the Azure Cache for Redis."
 }
 
-output "github_actions_client_id" {
-  value       = module.ci_cd.github_actions_client_id
-  description = "Client ID of the Azure AD application used by GitHub Actions OIDC."
-}
-
-output "managed_identity_web_client_id" {
-  value       = module.security.managed_identity_web_client_id
-  description = "Client ID of the web app user-assigned managed identity."
-}
-
-output "managed_identity_api_client_id" {
-  value       = module.security.managed_identity_api_client_id
-  description = "Client ID of the API user-assigned managed identity."
-}
-
-output "apim_gateway_url" {
-  value       = module.compute.apim_gateway_url
-  description = "Azure API Management gateway URL."
-}
-
-output "nat_public_ips" {
-  value       = [module.network.nat_public_ip_z1, module.network.nat_public_ip_z2, module.network.nat_public_ip_z3]
-  description = "Zone-redundant NAT Gateway public IP addresses (one per availability zone)."
-}
-
-output "log_analytics_workspace_guid" {
-  value       = module.monitoring_bootstrap.log_analytics_workspace_guid
-  description = "Log Analytics Workspace GUID — use this value for log_analytics_workspace_guid variable on subsequent applies."
+output "redis_ssl_port" {
+  description = "SSL port of the Redis cache (for post-deploy key injection)."
+  value       = module.database.redis_ssl_port
 }

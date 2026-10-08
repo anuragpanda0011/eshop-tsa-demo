@@ -11,7 +11,15 @@ provider "azurerm" {
   subscription_id = var.subscription_id
 }
 
-provider "azuread" {}
+# Explicit OIDC configuration on the azuread provider ensures consistent
+# workload identity federation authentication in CI/CD pipelines.
+# The provider reads AZURE_CLIENT_ID and AZURE_TENANT_ID from the environment
+# when use_oidc = true is set, matching the azurerm provider behaviour.
+provider "azuread" {
+  use_oidc  = true
+  tenant_id = var.tenant_id
+  client_id = var.cicd_client_id
+}
 
 provider "random" {}
 

@@ -1,122 +1,96 @@
 variable "resource_group_name" {
-  type = string
+  description = "Name of the resource group."
+  type        = string
 }
 
 variable "location" {
-  type = string
+  description = "Azure region."
+  type        = string
 }
 
 variable "project" {
-  type = string
+  description = "Project name for naming."
+  type        = string
 }
 
 variable "environment" {
-  type = string
+  description = "Environment name for naming."
+  type        = string
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Resource tags."
+  type        = map(string)
+  default     = {}
 }
 
-variable "subnet_pe_id" {
-  type = string
+variable "sql_admin_login" {
+  description = "SQL administrator login (used for initial server creation only; Entra-only auth is enforced)."
+  type        = string
 }
 
-variable "subnet_redis_id" {
-  type = string
+variable "sql_admin_password" {
+  description = "SQL administrator password (used for initial server creation only; Entra-only auth is enforced post-deploy)."
+  type        = string
+  sensitive   = true
 }
 
-variable "vnet_id" {
-  type = string
-}
-
-variable "sql_sku" {
-  type    = string
-  default = "GP_Gen5_2"
+variable "sql_sku_name" {
+  description = "Azure SQL Database SKU name."
+  type        = string
+  default     = "GP_Gen5_2"
 }
 
 variable "sql_max_size_gb" {
-  type    = number
-  default = 32
-}
-
-variable "sql_zone_redundant" {
-  type    = bool
-  default = true
+  description = "Maximum database size in GB."
+  type        = number
+  default     = 32
 }
 
 variable "redis_sku" {
-  type    = string
-  default = "Standard"
+  description = "Redis Cache SKU (Basic, Standard, Premium)."
+  type        = string
+  default     = "Standard"
 }
 
 variable "redis_family" {
-  type    = string
-  default = "C"
+  description = "Redis Cache family."
+  type        = string
+  default     = "C"
 }
 
 variable "redis_capacity" {
-  type    = number
-  default = 1
+  description = "Redis Cache capacity."
+  type        = number
+  default     = 1
+}
+
+variable "private_endpoint_subnet_id" {
+  description = "Subnet ID for private endpoints."
+  type        = string
+}
+
+variable "vnet_id" {
+  description = "VNet resource ID."
+  type        = string
 }
 
 variable "log_analytics_workspace_id" {
-  type = string
-}
-
-variable "private_dns_zone_sql_id" {
-  type = string
-}
-
-variable "private_dns_zone_redis_id" {
-  type = string
+  description = "Log Analytics workspace resource ID."
+  type        = string
 }
 
 variable "key_vault_id" {
-  type = string
-}
-
-variable "managed_identity_web_principal_id" {
-  type = string
-}
-
-variable "managed_identity_api_principal_id" {
-  type = string
-}
-
-variable "aad_sql_admin_object_id" {
+  description = "Key Vault resource ID for storing connection string secrets."
   type        = string
-  description = "Object ID of the AAD group or user to set as SQL AAD administrator."
-
-  validation {
-    condition     = length(var.aad_sql_admin_object_id) > 0
-    error_message = "aad_sql_admin_object_id must be a non-empty AAD object ID."
-  }
 }
 
-variable "tenant_id" {
+variable "private_dns_zone_sql_id" {
+  description = "Resource ID of the SQL private DNS zone."
   type        = string
-  description = "Azure AD tenant ID for AAD SQL admin configuration."
-
-  validation {
-    condition     = length(var.tenant_id) > 0
-    error_message = "tenant_id must be provided."
-  }
 }
 
-variable "audit_storage_primary_blob_endpoint" {
+variable "private_dns_zone_redis_id" {
+  description = "Resource ID of the Redis private DNS zone."
   type        = string
-  description = "Primary blob endpoint of the immutable audit storage account."
-}
-
-variable "audit_storage_account_id" {
-  type        = string
-  description = "Resource ID of the audit storage account."
-}
-
-variable "audit_storage_subscription_id" {
-  type        = string
-  default     = ""
-  description = "Subscription ID of the audit storage account. Pass var.subscription_id from root."
 }

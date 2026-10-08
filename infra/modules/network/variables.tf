@@ -1,119 +1,71 @@
 variable "resource_group_name" {
-  type = string
+  description = "Name of the resource group."
+  type        = string
 }
 
 variable "location" {
-  type = string
+  description = "Azure region."
+  type        = string
 }
 
 variable "project" {
-  type = string
+  description = "Project name for naming."
+  type        = string
 }
 
 variable "environment" {
-  type = string
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Environment name for naming."
+  type        = string
 }
 
 variable "vnet_address_space" {
-  type    = list(string)
-  default = ["10.10.0.0/16"]
+  description = "Address space for the virtual network."
+  type        = list(string)
+  default     = ["10.10.0.0/16"]
 }
 
-variable "subnet_aca_infra_cidr" {
-  type    = string
-  default = "10.10.0.0/23"
-}
-
-variable "subnet_aca_apps_cidr" {
-  type    = string
-  default = "10.10.2.0/23"
-}
-
-variable "subnet_pe_cidr" {
-  type    = string
-  default = "10.10.4.0/24"
-}
-
-variable "subnet_appgw_cidr" {
-  type    = string
-  default = "10.10.5.0/26"
-}
-
-variable "subnet_redis_cidr" {
-  type    = string
-  default = "10.10.6.0/27"
-}
-
-variable "subnet_agents_cidr" {
-  type    = string
-  default = "10.10.7.0/26"
-}
-
-variable "subnet_bastion_cidr" {
-  type    = string
-  default = "10.10.8.0/27"
-}
-
-variable "subnet_apim_cidr" {
-  type        = string
-  default     = "10.10.9.0/27"
-  description = "CIDR block for the APIM dedicated subnet (External VNet mode requires /27 or larger)."
+variable "tags" {
+  description = "Resource tags."
+  type        = map(string)
+  default     = {}
 }
 
 variable "log_analytics_workspace_id" {
+  description = "Log Analytics workspace resource ID for diagnostic settings."
   type        = string
-  description = "Resource ID of the Log Analytics Workspace for diagnostic settings and flow log traffic analytics."
 }
 
-variable "log_analytics_workspace_guid" {
+variable "custom_domain_name" {
+  description = "Custom domain for the storefront (optional)."
   type        = string
-  description = "Workspace GUID (not resource ID) required by traffic analytics in NSG flow logs."
-}
-
-variable "custom_domain" {
-  type    = string
-  default = "shop.contoso.com"
+  default     = ""
 }
 
 variable "dns_zone_name" {
-  type    = string
-  default = "contoso.com"
+  description = "Azure DNS public zone name (optional)."
+  type        = string
+  default     = ""
 }
 
 variable "dns_zone_resource_group" {
-  type    = string
-  default = "rg-dns"
-}
-
-variable "aca_web_fqdn" {
+  description = "Resource group of the DNS zone (optional)."
   type        = string
   default     = ""
-  description = "FQDN of the ACA web container app (populated after compute module runs, used by Front Door origin). Empty on first apply — use two-phase apply documented in README."
 }
 
-variable "key_vault_id" {
+variable "web_ca_fqdn" {
+  description = "FQDN of the Web Container App (injected after compute module creates it). Used as Front Door origin."
   type        = string
-  description = "Key Vault resource ID used to configure CMK on the flow-log storage account."
+  default     = ""
 }
 
-variable "data_protection_key_name" {
+variable "apim_publisher_email" {
+  description = "Publisher email for API Management."
   type        = string
-  description = "Key Vault key name for CMK on the flow-log storage account. Must match the key created in the security module."
 }
 
-variable "network_watcher_name" {
+variable "front_door_profile_resource_guid" {
+  description = "Resource GUID of the Front Door profile. Used in APIM global policy to validate X-Azure-FDID header. Obtain after first apply from the front_door_profile_resource_guid output."
   type        = string
-  default     = "NetworkWatcher_eastus2"
-  description = "Name of the Azure Network Watcher. Defaults to the Azure-created default for the primary region. Override if your subscription uses a custom name."
-}
-
-variable "network_watcher_resource_group" {
-  type        = string
-  default     = "NetworkWatcherRG"
-  description = "Resource group containing the Azure Network Watcher. Override if your subscription uses a non-default resource group."
+  default     = ""
 }
