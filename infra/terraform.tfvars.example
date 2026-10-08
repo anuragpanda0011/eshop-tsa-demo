@@ -1,0 +1,68 @@
+# Copy this file to terraform.tfvars and fill in real values.
+# Never commit terraform.tfvars to source control.
+# Secrets must be passed via environment variables (TF_VAR_*) or a secrets manager.
+
+subscription_id    = "00000000-0000-0000-0000-000000000000"
+tenant_id          = "00000000-0000-0000-0000-000000000000"
+location           = "eastus2"
+location_secondary = "westus2"
+environment        = "prod"
+project            = "eshoponweb"
+
+# Networking
+vnet_address_space = ["10.10.0.0/16"]
+
+# Compute
+web_container_image = "mcr.microsoft.com/dotnet/samples:aspnetapp"
+api_container_image = "mcr.microsoft.com/dotnet/samples:aspnetapp"
+web_min_replicas    = 2
+web_max_replicas    = 20
+api_min_replicas    = 2
+api_max_replicas    = 15
+
+# Database
+# Set via environment variable: export TF_VAR_sql_admin_password="$(openssl rand -base64 32)"
+sql_admin_login = "sqladminuser"
+sql_sku_name    = "GP_Gen5_2"
+sql_max_size_gb = 32
+
+# Redis
+redis_sku      = "Standard"
+redis_family   = "C"
+redis_capacity = 1
+
+# Front Door / DNS
+custom_domain_name      = "shop.contoso.com"
+dns_zone_name           = "contoso.com"
+dns_zone_resource_group = "rg-dns"
+
+# APIM — set after first apply using the front_door_profile_resource_guid output
+# front_door_profile_resource_guid = ""
+
+# ACR geo-replication — set explicitly; leaving empty avoids unintended cost
+acr_georeplications = []
+
+# Static Web Apps
+swa_sku_tier = "Standard"
+
+# GitHub OIDC
+github_org  = "my-org"
+github_repo = "eShopOnWeb"
+
+# Monitoring
+log_retention_days = 90
+alert_email        = "ops-team@contoso.com"
+
+# Secrets — use TF_VAR_* environment variables, never store plaintext here:
+# export TF_VAR_sql_admin_password="..."
+# export TF_VAR_jwt_secret_key_value="..."
+# export TF_VAR_health_probe_token="..."
+
+# APIM publisher
+apim_publisher_email = "api-admin@contoso.com"
+
+tags = {
+  project     = "eShopOnWeb"
+  environment = "prod"
+  managed_by  = "terraform"
+}

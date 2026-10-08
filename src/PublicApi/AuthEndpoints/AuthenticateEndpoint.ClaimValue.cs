@@ -1,4 +1,4 @@
-﻿namespace Microsoft.eShopWeb.PublicApi.AuthEndpoints;
+namespace Microsoft.eShopWeb.PublicApi.AuthEndpoints;
 
 public class ClaimValue
 {
@@ -8,10 +8,10 @@ public class ClaimValue
 
     public ClaimValue(string type, string value)
     {
-        Type = type;
+        Type  = type;
         Value = value;
     }
 
-    public string Type { get; set; } = string.Empty;
+    public string Type  { get; set; } = string.Empty;
     public string Value { get; set; } = string.Empty;
 }

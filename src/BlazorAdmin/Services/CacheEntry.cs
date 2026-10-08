@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace BlazorAdmin.Services;
 
@@ -8,11 +8,9 @@ public class CacheEntry<T>
     {
         Value = item;
     }
-    public CacheEntry()
-    {
 
-    }
+    public CacheEntry() { }
 
-    public T Value { get; set; }
+    public T Value { get; set; } = default!;
     public DateTime DateCreated { get; set; } = DateTime.UtcNow;
 }

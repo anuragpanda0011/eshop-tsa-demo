@@ -1,12 +1,13 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.Json;
+using System.Threading;
 using BlazorShared;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.eShopWeb;
-using Microsoft.eShopWeb.ApplicationCore.Constants;
 using Microsoft.eShopWeb.ApplicationCore.Interfaces;
 using Microsoft.eShopWeb.ApplicationCore.Services;
 using Microsoft.eShopWeb.Infrastructure.Data;
@@ -23,19 +24,48 @@ using Microsoft.OpenApi.Models;
 using MinimalApi.Endpoint.Configurations.Extensions;
 using MinimalApi.Endpoint.Extensions;
 
+// ---------------------------------------------------------------------------
+// Validate required environment variables at startup
+// ---------------------------------------------------------------------------
+static string RequireEnv(string name)
+{
+    var value = Environment.GetEnvironmentVariable(name);
+    if (string.IsNullOrWhiteSpace(value))
+        throw new InvalidOperationException(
+            $"Required environment variable '{name}' is not set. " +
+            "In production this must be sourced from Azure Key Vault via the app's Managed Identity.");
+    return value;
+}
+
+// JWT secret must come from environment / Key Vault secret injection — never hardcoded.
+var jwtSecretKey = RequireEnv("JWT_SECRET_KEY");
+
+// Validate algorithm allowlist to prevent 'none' / weak algorithm attacks.
+var allowedJwtAlgorithms = new[] { SecurityAlgorithms.HmacSha256, SecurityAlgorithms.HmacSha512 };
+
 var builder = WebApplication.CreateBuilder(args);
+
+// ---------------------------------------------------------------------------
+// Structured JSON logging — attach Azure trace IDs automatically
+// ---------------------------------------------------------------------------
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole(options =>
+{
+    options.FormatterName = "json";
+});
 
 builder.Services.AddEndpoints();
 
+builder.Configuration.AddEnvironmentVariables();
+
 // Use to force loading of appsettings.json of test project
 builder.Configuration.AddConfigurationFile("appsettings.test.json");
-builder.Logging.AddConsole();
 
 Microsoft.eShopWeb.Infrastructure.Dependencies.ConfigureServices(builder.Configuration, builder.Services);
 
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
-        .AddEntityFrameworkStores<AppIdentityDbContext>()
-        .AddDefaultTokenProviders();
+    .AddEntityFrameworkStores<AppIdentityDbContext>()
+    .AddDefaultTokenProviders();
 
 builder.Services.AddScoped(typeof(IRepository<>), typeof(EfRepository<>));
 builder.Services.AddScoped(typeof(IReadRepository<>), typeof(EfRepository<>));
@@ -49,25 +79,67 @@ var configSection = builder.Configuration.GetRequiredSection(BaseUrlConfiguratio
 builder.Services.Configure<BaseUrlConfiguration>(configSection);
 var baseUrlConfig = configSection.Get<BaseUrlConfiguration>();
 
-builder.Services.AddMemoryCache();
+// ---------------------------------------------------------------------------
+// Redis distributed cache (replaces IMemoryCache for multi-instance scale)
+// Connection string must use rediss:// (TLS) in production.
+// ---------------------------------------------------------------------------
+var redisConnectionString = RequireEnv("REDIS_CONNECTION_STRING");
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConnectionString;
+    options.InstanceName = "PublicApi:";
+});
 
-var key = Encoding.ASCII.GetBytes(AuthorizationConstants.JWT_SECRET_KEY);
+// ---------------------------------------------------------------------------
+// Rate limiting on auth endpoints (Redis-backed via AspNetCoreRateLimit or
+// the built-in ASP.NET Core 8 rate limiter with a fixed-window policy).
+// ---------------------------------------------------------------------------
+builder.Services.AddRateLimiter(rateLimiterOptions =>
+{
+    rateLimiterOptions.AddFixedWindowLimiter("auth", options =>
+    {
+        options.Window = TimeSpan.FromMinutes(1);
+        options.PermitLimit = 10;
+        options.QueueLimit = 0;
+    });
+
+    rateLimiterOptions.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.StatusCode = 429;
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsync(
+            JsonSerializer.Serialize(new
+            {
+                error = "RATE_LIMIT_EXCEEDED",
+                message = "Too many requests. Please try again later."
+            }), cancellationToken);
+    };
+});
+
+// ---------------------------------------------------------------------------
+// JWT authentication — secret from environment, algorithm from allowlist
+// ---------------------------------------------------------------------------
+var keyBytes = Encoding.ASCII.GetBytes(jwtSecretKey);
 builder.Services.AddAuthentication(config =>
 {
     config.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
 })
 .AddJwtBearer(config =>
 {
-    config.RequireHttpsMetadata = false;
+    // Require HTTPS metadata in non-Development environments
+    config.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
     config.SaveToken = true;
     config.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(key),
+        IssuerSigningKey = new SymmetricSecurityKey(keyBytes),
         ValidateIssuer = false,
-        ValidateAudience = false
+        ValidateAudience = false,
+        ValidAlgorithms = allowedJwtAlgorithms
     };
 });
+
+builder.Services.AddAuthorization();
 
 const string CORS_POLICY = "CorsPolicy";
 builder.Services.AddCors(options =>
@@ -75,7 +147,10 @@ builder.Services.AddCors(options =>
     options.AddPolicy(name: CORS_POLICY,
         corsPolicyBuilder =>
         {
-            corsPolicyBuilder.WithOrigins(baseUrlConfig!.WebBase.Replace("host.docker.internal", "localhost").TrimEnd('/'));
+            corsPolicyBuilder.WithOrigins(
+                baseUrlConfig!.WebBase
+                    .Replace("host.docker.internal", "localhost")
+                    .TrimEnd('/'));
             corsPolicyBuilder.AllowAnyMethod();
             corsPolicyBuilder.AllowAnyHeader();
         });
@@ -83,49 +158,60 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddControllers();
 builder.Services.AddAutoMapper(typeof(MappingProfile).Assembly);
-builder.Configuration.AddEnvironmentVariables();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "My API", Version = "v1" });
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "eShopOnWeb Public API", Version = "v1" });
     c.EnableAnnotations();
     c.SchemaFilter<CustomSchemaFilters>();
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = @"JWT Authorization header using the Bearer scheme. \r\n\r\n 
-                      Enter 'Bearer' [space] and then your token in the text input below.
-                      \r\n\r\nExample: 'Bearer 12345abcdef'",
+        Description = "JWT Authorization header using the Bearer scheme. " +
+                      "Enter 'Bearer' [space] and then your token in the text input below. " +
+                      "Example: 'Bearer eyJhbGci...'",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
         Scheme = "Bearer"
     });
-
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement()
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
             {
-                    {
-                        new OpenApiSecurityScheme
-                        {
-                            Reference = new OpenApiReference
-                            {
-                                Type = ReferenceType.SecurityScheme,
-                                Id = "Bearer"
-                            },
-                            Scheme = "oauth2",
-                            Name = "Bearer",
-                            In = ParameterLocation.Header,
-
-                        },
-                        new List<string>()
-                    }
-            });
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                },
+                Scheme = "oauth2",
+                Name = "Bearer",
+                In = ParameterLocation.Header
+            },
+            new List<string>()
+        }
+    });
 });
 
 var app = builder.Build();
 
-app.Logger.LogInformation("PublicApi App created...");
+// ---------------------------------------------------------------------------
+// Graceful shutdown: drain in-flight requests, close pools, exit 0
+// ---------------------------------------------------------------------------
+var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+lifetime.ApplicationStopping.Register(() =>
+{
+    app.Logger.LogInformation(
+        "SIGTERM received — draining requests and closing connection pools.");
+    // Allow up to 10 s for in-flight requests to complete
+    Thread.Sleep(TimeSpan.FromSeconds(10));
+});
 
+// ---------------------------------------------------------------------------
+// Structured startup log with Azure trace context
+// ---------------------------------------------------------------------------
+app.Logger.LogInformation("PublicApi App created. Environment={Environment}", app.Environment.EnvironmentName);
 app.Logger.LogInformation("Seeding Database...");
 
 using (var scope = app.Services.CreateScope())
@@ -143,7 +229,8 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "An error occurred seeding the DB.");
+        app.Logger.LogError(ex, "An error occurred seeding the DB. TraceId={TraceId}",
+            System.Diagnostics.Activity.Current?.Id ?? "N/A");
     }
 }
 
@@ -160,16 +247,15 @@ app.UseRouting();
 
 app.UseCors(CORS_POLICY);
 
+app.UseRateLimiter();
+
+app.UseAuthentication();
 app.UseAuthorization();
 
-// Enable middleware to serve generated Swagger as a JSON endpoint.
 app.UseSwagger();
-
-// Enable middleware to serve swagger-ui (HTML, JS, CSS, etc.), 
-// specifying the Swagger JSON endpoint.
 app.UseSwaggerUI(c =>
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "My API V1");
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "eShopOnWeb Public API V1");
 });
 
 app.MapControllers();

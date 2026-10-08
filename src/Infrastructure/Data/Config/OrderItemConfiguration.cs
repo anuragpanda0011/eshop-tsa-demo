@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
 
@@ -18,7 +18,7 @@ public class OrderItemConfiguration : IEntityTypeConfiguration<OrderItem>
         });
 
         builder.Property(oi => oi.UnitPrice)
-            .IsRequired(true)
+            .IsRequired()
             .HasColumnType("decimal(18,2)");
     }
 }

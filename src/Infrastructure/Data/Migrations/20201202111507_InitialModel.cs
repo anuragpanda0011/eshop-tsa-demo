@@ -1,4 +1,7 @@
-﻿using System;
+// EF Core migration — targets Azure SQL Database (General Purpose tier).
+// Schema is T-SQL compatible; no changes required for Azure SQL Database.
+// Do NOT edit manually; regenerate via `dotnet ef migrations add`.
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Microsoft.eShopWeb.Infrastructure.Data.Migrations;

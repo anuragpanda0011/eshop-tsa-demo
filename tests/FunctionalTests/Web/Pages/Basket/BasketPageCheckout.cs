@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
 namespace Microsoft.eShopWeb.FunctionalTests.Web.Pages.Basket;
@@ -19,7 +19,6 @@ public class BasketPageCheckout : IClassFixture<TestApplication>
     [Fact]
     public async Task RedirectsToLoginIfNotAuthenticated()
     {
-
         // Load Home Page
         var response = await Client.GetAsync("/");
         response.EnsureSuccessStatusCode();
@@ -30,10 +29,10 @@ public class BasketPageCheckout : IClassFixture<TestApplication>
         // Add Item to Cart
         var keyValues = new List<KeyValuePair<string, string>>
         {
-            new KeyValuePair<string, string>("id", "2"),
-            new KeyValuePair<string, string>("name", "shirt"),
-            new KeyValuePair<string, string>("price", "19.49"),
-            new KeyValuePair<string, string>("__RequestVerificationToken", token)
+            new("id", "2"),
+            new("name", "shirt"),
+            new("price", "19.49"),
+            new("__RequestVerificationToken", token)
         };
         var formContent = new FormUrlEncodedContent(keyValues);
         var postResponse = await Client.PostAsync("/basket/index", formContent);

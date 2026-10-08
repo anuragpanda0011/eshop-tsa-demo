@@ -1,9 +1,51 @@
-.dockerignore
+# Secrets and credentials — must never enter the build context
 .env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+*.cer
+*secrets*
+
+# Source control
 .git
-.gitignore
-.vs
-.vscode
-*/bin
-*/obj
-**/.toolstarget
+.github
+.gitattributes
+
+# Terraform / Bicep state and plans
+terraform.tfstate
+terraform.tfstate.backup
+*.tfplan
+.terraform/
+
+# Build artefacts and caches
+**/bin/
+**/obj/
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+dist/
+build/
+**/TestResults/
+
+# IDE and OS noise
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+
+# Local docker-compose overrides
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Logs
+*.log
+logs/
+
+# Data Protection key XML (stored in Key Vault / Blob, not in image)
+key-*.xml

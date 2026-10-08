@@ -1,51 +1,58 @@
-﻿using Microsoft.eShopWeb;
-using Microsoft.eShopWeb.PublicApi.CatalogItemEndpoints;
-using Microsoft.eShopWeb.Web.ViewModels;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
 using System.Net;
+using System.Net.Http;
+using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.eShopWeb.PublicApi.CatalogItemEndpoints;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace PublicApiIntegrationTests.CatalogItemEndpoints;
 
 [TestClass]
-public class CatalogItemListPagedEndpoint
+public class CatalogItemListPagedEndpointTest
 {
+    private static readonly JsonSerializerOptions JsonOptions =
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
     [TestMethod]
     public async Task ReturnsFirst10CatalogItems()
     {
         var client = ProgramTest.NewClient;
-        var response = await client.GetAsync("/api/catalog-items?pageSize=10");
+        // Route prefixed with /api/v1/ per API design rules.
+        var response = await client.GetAsync("/api/v1/catalog-items?pageSize=10");
         response.EnsureSuccessStatusCode();
-        var stringResponse = await response.Content.ReadAsStringAsync();
-        var model = stringResponse.FromJson<CatalogIndexViewModel>();
 
+        var stringResponse = await response.Content.ReadAsStringAsync();
+        var model = JsonSerializer.Deserialize<ListPagedCatalogItemResponse>(stringResponse, JsonOptions);
+
+        Assert.IsNotNull(model);
         Assert.AreEqual(10, model!.CatalogItems.Count());
     }
 
     [TestMethod]
     public async Task ReturnsCorrectCatalogItemsGivenPageIndex1()
     {
-
         var pageSize = 10;
         var pageIndex = 1;
 
         var client = ProgramTest.NewClient;
-        var response = await client.GetAsync($"/api/catalog-items");
+
+        // Get total count from the first page
+        var response = await client.GetAsync("/api/v1/catalog-items");
         response.EnsureSuccessStatusCode();
         var stringResponse = await response.Content.ReadAsStringAsync();
-        var model = stringResponse.FromJson<ListPagedCatalogItemResponse>();
+        var model = JsonSerializer.Deserialize<ListPagedCatalogItemResponse>(stringResponse, JsonOptions);
         var totalItem = model!.CatalogItems.Count();
 
-        var response2 = await client.GetAsync($"/api/catalog-items?pageSize={pageSize}&pageIndex={pageIndex}");
-        response.EnsureSuccessStatusCode();
+        // Get page 1
+        var response2 = await client.GetAsync(
+            $"/api/v1/catalog-items?pageSize={pageSize}&pageIndex={pageIndex}");
+        response2.EnsureSuccessStatusCode();
         var stringResponse2 = await response2.Content.ReadAsStringAsync();
-        var model2 = stringResponse2.FromJson<ListPagedCatalogItemResponse>();
+        var model2 = JsonSerializer.Deserialize<ListPagedCatalogItemResponse>(stringResponse2, JsonOptions);
 
         var totalExpected = totalItem - (pageSize * pageIndex);
-
         Assert.AreEqual(totalExpected, model2!.CatalogItems.Count());
     }
 
@@ -54,19 +61,20 @@ public class CatalogItemListPagedEndpoint
     [DataRow("catalog-brands")]
     [DataRow("catalog-types")]
     [DataRow("catalog-items/1")]
-    public async Task SuccessFullMutipleParallelCall(string endpointName)
+    public async Task SuccessFullMultipleParallelCall(string endpointName)
     {
         var client = ProgramTest.NewClient;
         var tasks = new List<Task<HttpResponseMessage>>();
 
         for (int i = 0; i < 100; i++)
         {
-            var task = client.GetAsync($"/api/{endpointName}");
+            var task = client.GetAsync($"/api/v1/{endpointName}");
             tasks.Add(task);
         }
-        await Task.WhenAll(tasks.ToList());
-        var totalKO = tasks.Count(t => t.Result.StatusCode != HttpStatusCode.OK);
 
+        await Task.WhenAll(tasks);
+
+        var totalKO = tasks.Count(t => t.Result.StatusCode != HttpStatusCode.OK);
         Assert.AreEqual(0, totalKO);
     }
 }

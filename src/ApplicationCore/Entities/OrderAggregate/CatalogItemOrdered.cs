@@ -1,4 +1,4 @@
-﻿using Ardalis.GuardClauses;
+using Ardalis.GuardClauses;
 
 namespace Microsoft.eShopWeb.ApplicationCore.Entities.OrderAggregate;
 
@@ -19,8 +19,9 @@ public class CatalogItemOrdered // ValueObject
         PictureUri = pictureUri;
     }
 
-    #pragma warning disable CS8618 // Required by Entity Framework
-    private CatalogItemOrdered() {}
+#pragma warning disable CS8618 // Required by Entity Framework
+    private CatalogItemOrdered() { }
+#pragma warning restore CS8618
 
     public int CatalogItemId { get; private set; }
     public string ProductName { get; private set; }
